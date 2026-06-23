@@ -1,0 +1,25 @@
+## .NET build outputs
+bin/
+obj/
+
+## NuGet & SDK caches (you have them incorrectly inside repo)
+.dotnet/
+.nuget/
+.tmp/
+
+## IDE & user settings
+*.user
+*.suo
+*.DotSettings.user
+.vs/
+
+## Test results
+TestResults/
+*.trx
+
+## Coverage
+.coverage
+*.coveragexml
+
+## Misc
+*.log
