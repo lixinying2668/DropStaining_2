@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block crumb %}实验配置{% endblock %}
+{% block page_title %}实验配置{% endblock %}
+{% block page_subtitle %}为每张玻片配置脚本、一抗代码、加样体积和温度；DAB 配制量自动按玻片数计算。{% endblock %}
+{% block content %}
+<section class="split-grid dab-layout">
+  <article class="modern-card dab-card-large">
+    <div class="section-title"><div><h2>DAB 临时配制</h2><p>A液:B液:纯水 = 1:1:18，每轮额外多配 0.4mL。</p></div><div class="badge-soft">{{ dab.slide_count }} 张 IHC</div></div>
+    <div class="dab-mixer">
+      <div class="mix-beaker"><div style="height:72%"></div><b>{{ dab.total_ml }} mL</b><span>总量</span></div>
+      <div class="dab-numbers">
+        <div><span>DAB A液</span><b>{{ dab.dab_a_ml }}</b><em>mL</em></div>
+        <div><span>DAB B液</span><b>{{ dab.dab_b_ml }}</b><em>mL</em></div>
+        <div><span>纯水</span><b>{{ dab.pure_water_ml }}</b><em>mL</em></div>
+        <div><span>额外余量</span><b>0.4</b><em>mL</em></div>
+      </div>
+    </div>
+  </article>
+
+  <article class="modern-card compact-card">
+    <h3>流程模板</h3>
+    <div class="protocol-list">
+      {% for p in protocols %}
+      <div class="protocol-card"><b>{{ p.code }}</b><span>{{ p.name }}</span><small>{{ p.description }}</small></div>
+      {% endfor %}
+    </div>
+    <button class="btn btn-primary full" onclick="location.href='/run'">确认配置并进入运行</button>
+  </article>
+</section>
+
+<section class="modern-card">
+  <div class="section-title"><div><h2>玻片配置表</h2><p>一抗温度支持 40-55℃ 单片独立设置；清洗和混匀按通道同步执行。</p></div><button class="btn btn-soft" onclick="bulkFill()">批量填充默认值</button></div>
+  <div class="config-grid">
+  {% for ch in state.channels %}
+    {% for slide in ch.slides %}
+    <article class="slide-config-card" data-slide="{{ slide.id }}">
+      <header><b>{{ slide.id }}</b><span>通道{{ slide.channel }} - {{ slide.slot }}</span></header>
+      <small class="barcode">{{ slide.barcode }}</small>
+      <div class="form-grid-mini">
+        <label>脚本
+          <select class="input protocol">
+            {% for p in protocols %}<option value="{{ p.code }}" {% if slide.protocol_code == p.code %}selected{% endif %}>{{ p.code }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>一抗代码<input class="input antibody" value="{{ slide.antibody_code }}"></label>
+        <label>体积 μL<input class="input volume" type="number" min="50" max="100" value="{{ slide.primary_volume_ul }}"></label>
+        <label>温度 ℃<input class="input temp" type="number" min="40" max="55" step="0.5" value="{{ slide.temperature_c }}"></label>
+      </div>
+      <footer><span class="badge-soft">{{ slide.status.value }}</span><button class="btn btn-primary" onclick="saveSlide('{{ slide.id }}')">保存</button></footer>
+    </article>
+    {% endfor %}
+  {% endfor %}
+  {% if slide_count == 0 %}
+    <div class="empty-state"><b>尚未识别玻片</b><span>请先进入样本扫描页面。</span><button class="btn btn-primary" onclick="location.href='/samples'">去扫描样本</button></div>
+  {% endif %}
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/configure.js"></script>{% endblock %}

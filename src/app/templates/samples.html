@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block crumb %}样本扫描{% endblock %}
+{% block page_title %}样本区域扫描{% endblock %}
+{% block page_subtitle %}机械臂移动扫码头识别玻片二维码，自动映射到 4 个通道与 16 个物理位置。{% endblock %}
+{% block content %}
+<section class="control-strip modern-card">
+  <div class="control-main">
+    <label class="stepper-field"><span>本次模拟上载</span><input id="sampleCount" type="number" min="1" max="16" value="8"><em>张</em></label>
+    <button class="btn btn-primary btn-xl" onclick="scanSamples()">开始扫描样本区</button>
+    <button class="btn btn-soft btn-xl" onclick="location.href='/configure'">下一步：实验配置</button>
+  </div>
+  <div class="scan-hint"><b>扫描路径</b><span>通道1 → 通道2 → 通道3 → 通道4，单通道最多4张。</span></div>
+</section>
+
+<section class="split-grid wide-left">
+  <article class="modern-card">
+    <div class="section-title">
+      <div><h2>样本舱位图</h2><p>灰色为空位，蓝色为已识别玻片；通道被抽出时可在此闪烁提示。</p></div>
+      <div class="badge-soft">{{ slide_count }}/16 已上载</div>
+    </div>
+    <div class="sample-cabinet">
+      {% for ch in state.channels %}
+      <div class="sample-column status-{{ ch.status.value }}">
+        <div class="column-handle"><span>{{ ch.name }}</span><b>{{ ch.slides|length }}/4</b></div>
+        {% for i in range(1,5) %}
+          {% set slide = (ch.slides | selectattr('slot', 'equalto', i) | list | first) %}
+          <div class="sample-slot {{ 'occupied' if slide else 'empty' }}">
+            <div class="slot-no">{{ i }}</div>
+            <div><b>{{ slide.barcode if slide else '未上载' }}</b><span>{{ slide.current_step if slide else '等待玻片' }}</span></div>
+            <em>{{ slide.protocol_code if slide else '--' }}</em>
+          </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <aside class="stack-panel">
+    <article class="modern-card compact-card">
+      <h3>扫码状态</h3>
+      <div class="scanner-visual"><div></div><span>扫码头在线</span></div>
+      <div class="check-list small">
+        <div><span class="check ok"></span>ROI 已加载</div>
+        <div><span class="check ok"></span>校验光关闭</div>
+        <div><span class="check ok"></span>机械臂可移动</div>
+      </div>
+    </article>
+    <article class="modern-card compact-card">
+      <h3>操作提示</h3>
+      <p class="hint-line">扫描失败时，允许单格重新扫描或手工录入条码；正式项目可把这里接入扫描器 DCR55 通讯协议。</p>
+      <button class="btn btn-soft full">重新扫描选中位置</button>
+      <button class="btn btn-soft full">手工录入条码</button>
+    </article>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+async function scanSamples(){
+  const count = document.getElementById('sampleCount').value || 8;
+  await api('/api/samples/scan?count=' + count, {method:'POST'});
+  toast('样本扫描完成');
+  setTimeout(()=>location.reload(), 500);
+}
+</script>
+{% endblock %}

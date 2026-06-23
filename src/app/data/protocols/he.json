@@ -1,0 +1,29 @@
+{
+  "code": "HE",
+  "name": "HE 染色",
+  "version": "0.1",
+  "description": "占位流程，后续根据工艺补全。",
+  "default_temperature_c": 42.0,
+  "steps": [
+    {
+      "id": 1,
+      "name": "苏木素染色",
+      "step_type": "dispense",
+      "reagent_code": "HEMATOXYLIN",
+      "volume_ul": 100,
+      "duration_s": 60,
+      "temperature_c": 42,
+      "mix_after": true
+    },
+    {
+      "id": 2,
+      "name": "清洗液",
+      "step_type": "wash",
+      "reagent_code": "WASH",
+      "duration_s": 10,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": true
+    }
+  ]
+}

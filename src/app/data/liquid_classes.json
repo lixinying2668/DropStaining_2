@@ -1,0 +1,23 @@
+{
+  "Ab": {
+    "aspirate_speed": 40,
+    "dispense_speed": 45,
+    "leading_air_gap_ul": 2,
+    "trailing_air_gap_ul": 2,
+    "excess_volume_ul": 5
+  },
+  "DAB": {
+    "aspirate_speed": 50,
+    "dispense_speed": 55,
+    "leading_air_gap_ul": 2,
+    "trailing_air_gap_ul": 2,
+    "excess_volume_ul": 5
+  },
+  "Wash": {
+    "aspirate_speed": 100,
+    "dispense_speed": 120,
+    "leading_air_gap_ul": 0,
+    "trailing_air_gap_ul": 0,
+    "excess_volume_ul": 0
+  }
+}

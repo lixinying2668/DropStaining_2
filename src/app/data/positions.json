@@ -1,0 +1,454 @@
+{
+  "reagents": {
+    "R1": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R2": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R3": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R4": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R5": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R6": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R7": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R8": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R9": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R10": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R11": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R12": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R13": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R14": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R15": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R16": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R17": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R18": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R19": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R20": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R21": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R22": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R23": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R24": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R25": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R26": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R27": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R28": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R29": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R30": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R31": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R32": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R33": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R34": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R35": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R36": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R37": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R38": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R39": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "R40": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    }
+  },
+  "slides": {
+    "C1S1": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C1S2": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C1S3": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C1S4": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C2S1": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C2S2": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C2S3": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C2S4": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C3S1": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C3S2": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C3S3": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C3S4": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C4S1": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C4S2": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C4S3": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    },
+    "C4S4": {
+      "x": 0,
+      "y": 0,
+      "z_travel": 0,
+      "z_start": 0,
+      "z_end": 0,
+      "z_dispense": 0
+    }
+  }
+}

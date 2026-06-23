@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block crumb %}试剂识别{% endblock %}
+{% block page_title %}试剂区域扫描{% endblock %}
+{% block page_subtitle %}试剂区 5 列试剂架，每列 8 个瓶位；瓶身条码与位置条码共同确定试剂位置。{% endblock %}
+{% block content %}
+<section class="control-strip modern-card">
+  <div class="control-main">
+    <button class="btn btn-primary btn-xl" onclick="scanReagents()">开始扫描试剂架</button>
+    <button class="btn btn-soft btn-xl" onclick="location.href='/configure'">下一步：实验配置</button>
+  </div>
+  <div class="scan-hint"><b>当前识别</b><span>{{ state.reagents|length }} 个有效试剂位；支持运行期间更换二抗或新增试剂。</span></div>
+</section>
+
+<section class="split-grid wide-left">
+  <article class="modern-card">
+    <div class="section-title">
+      <div><h2>试剂架地图</h2><p>绿色为已识别，灰色为空位；试剂不足或缺失时自动报警。</p></div>
+      <div class="badge-soft">5列 × 8位</div>
+    </div>
+    <div class="reagent-deck">
+      {% for col in range(1,6) %}
+      <div class="reagent-rack">
+        <header><b>试剂架 {{ col }}</b><span>传感器 {{ 'ON' if col <= 5 else 'OFF' }}</span></header>
+        {% for row in range(1,9) %}
+          {% set pos = 'R' ~ ((col-1)*8 + row) %}
+          {% set r = (state.reagents | selectattr('position','equalto',pos) | list | first) %}
+          <div class="vial {{ 'filled' if r else 'empty' }} {{ r.reagent_type if r else '' }}">
+            <b>{{ pos }}</b>
+            <div><span>{{ r.name if r else '未识别' }}</span><small>{{ r.code if r else 'EMPTY' }}</small></div>
+            <em>{{ r.volume_ml ~ 'mL' if r else '--' }}</em>
+          </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <aside class="stack-panel">
+    <article class="modern-card compact-card">
+      <h3>试剂分类</h3>
+      <div class="category-list">
+        <div><i class="c-common"></i><span>通用试剂</span><b>阻断/苏木素</b></div>
+        <div><i class="c-primary"></i><span>一抗试剂</span><b>多抗体并行</b></div>
+        <div><i class="c-secondary"></i><span>二抗试剂</span><b>双套上载</b></div>
+        <div><i class="c-dab"></i><span>DAB</span><b>A/B/水配制</b></div>
+        <div><i class="c-wash"></i><span>清洗液</span><b>泵控注入</b></div>
+      </div>
+    </article>
+    <article class="modern-card compact-card">
+      <h3>缺失检查</h3>
+      <div class="check-list small">
+        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>阻断剂</div>
+        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>一抗 / 二抗</div>
+        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>DAB A/B + 纯水</div>
+        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>清洗液</div>
+      </div>
+    </article>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+async function scanReagents(){
+  await api('/api/reagents/scan', {method:'POST'});
+  toast('试剂扫描完成');
+  setTimeout(()=>location.reload(), 500);
+}
+</script>
+{% endblock %}

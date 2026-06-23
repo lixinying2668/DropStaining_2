@@ -1,0 +1,149 @@
+{
+  "code": "IHC",
+  "name": "冰冻免疫组化 IHC",
+  "version": "0.1",
+  "description": "内源性酶阻断、一抗、二抗、DAB、苏木素、清洗混匀。",
+  "default_temperature_c": 42.0,
+  "steps": [
+    {
+      "id": 1,
+      "name": "人工固定 1min",
+      "step_type": "manual",
+      "duration_s": 60,
+      "machine_execute": false,
+      "note": "一般不在机器完成"
+    },
+    {
+      "id": 2,
+      "name": "人工水洗 5s",
+      "step_type": "manual",
+      "duration_s": 5,
+      "machine_execute": false
+    },
+    {
+      "id": 3,
+      "name": "人工清洗液 5s",
+      "step_type": "manual",
+      "duration_s": 5,
+      "machine_execute": false
+    },
+    {
+      "id": 4,
+      "name": "加内源性酶阻断剂",
+      "step_type": "dispense",
+      "reagent_code": "BLOCK",
+      "volume_ul": 100,
+      "duration_s": 20,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": false
+    },
+    {
+      "id": 5,
+      "name": "清洗液 10s",
+      "step_type": "wash",
+      "reagent_code": "WASH",
+      "duration_s": 10,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": true
+    },
+    {
+      "id": 6,
+      "name": "加一抗试剂",
+      "step_type": "dispense",
+      "reagent_code": "PRIMARY",
+      "min_volume_ul": 50,
+      "max_volume_ul": 100,
+      "duration_s": 270,
+      "temperature_c": 42,
+      "per_slide_temperature": true,
+      "mix_after": true,
+      "channel_level": false
+    },
+    {
+      "id": 7,
+      "name": "清洗液 15s",
+      "step_type": "wash",
+      "reagent_code": "WASH",
+      "duration_s": 15,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": true
+    },
+    {
+      "id": 8,
+      "name": "加二抗试剂",
+      "step_type": "dispense",
+      "reagent_code": "SECONDARY",
+      "min_volume_ul": 50,
+      "max_volume_ul": 100,
+      "duration_s": 90,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": false
+    },
+    {
+      "id": 9,
+      "name": "清洗液 15s",
+      "step_type": "wash",
+      "reagent_code": "WASH",
+      "duration_s": 15,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": true
+    },
+    {
+      "id": 10,
+      "name": "DAB 临时配制",
+      "step_type": "dab_prepare",
+      "duration_s": 5,
+      "temperature_c": 42,
+      "channel_level": true,
+      "note": "A:B:纯水=1:1:18，每轮多配0.4mL"
+    },
+    {
+      "id": 11,
+      "name": "加 DAB 试剂",
+      "step_type": "dispense",
+      "reagent_code": "DAB",
+      "volume_ul": 200,
+      "duration_s": 90,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": false
+    },
+    {
+      "id": 12,
+      "name": "清洗液 5s",
+      "step_type": "wash",
+      "reagent_code": "WASH",
+      "duration_s": 5,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": true
+    },
+    {
+      "id": 13,
+      "name": "加苏木素试剂",
+      "step_type": "dispense",
+      "reagent_code": "HEMATOXYLIN",
+      "min_volume_ul": 50,
+      "max_volume_ul": 100,
+      "duration_s": 10,
+      "temperature_c": 42,
+      "mix_after": true,
+      "channel_level": false
+    },
+    {
+      "id": 14,
+      "name": "清洗液 10s",
+      "step_type": "wash",
+      "reagent_code": "WASH",
+      "duration_s": 10,
+      "temperature_c": 42,
+      "mix_after": false,
+      "channel_level": true
+    }
+  ]
+}

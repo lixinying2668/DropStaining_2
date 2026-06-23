@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>登录 - 全自动冰冻切片染色机</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="login-screen">
+  <div class="login-grid">
+    <section class="hero-panel glass-panel">
+      <div class="machine-badge">GBS · IHC · V1</div>
+      <h1>全自动冰冻切片染色机</h1>
+      <p>13.3 寸触屏优先设计，覆盖样本扫描、试剂识别、脚本配置、运行监控和工程调试。</p>
+      <div class="hero-device">
+        <div class="device-top">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div class="device-screen">
+          <div class="wave"></div>
+          <b>4 通道 × 4 玻片</b>
+          <small>并行调度 / 独立温控 / 通道清洗</small>
+        </div>
+        <div class="device-slots">
+          <i></i><i></i><i></i><i></i>
+        </div>
+      </div>
+      <div class="hero-stats">
+        <div><span>最大负载</span><b>16片</b></div>
+        <div><span>试剂位</span><b>5×8</b></div>
+        <div><span>控温范围</span><b>40-55℃</b></div>
+      </div>
+    </section>
+
+    <section class="login-card modern-card">
+      <div class="login-logo-row">
+        <div class="brand-orb big">郭</div>
+        <div><h2>用户登录</h2><p>选择角色后进入对应工作台</p></div>
+      </div>
+      <div class="role-picker" role="radiogroup">
+        <label class="role-tile active"><input type="radio" name="role" value="operator" checked><i>👩‍🔬</i><b>实验员</b><span>实验操作</span></label>
+        <label class="role-tile"><input type="radio" name="role" value="engineer"><i>🛠</i><b>工程师</b><span>设备调试</span></label>
+        <label class="role-tile"><input type="radio" name="role" value="admin"><i>🔐</i><b>管理员</b><span>用户管理</span></label>
+      </div>
+      <label class="field-label">用户名<input id="username" class="input input-xl" value="operator" placeholder="用户名"></label>
+      <label class="field-label">密码<input id="password" class="input input-xl" type="password" value="123456" placeholder="密码"></label>
+      <button class="btn btn-primary btn-xl full" onclick="login()">登录并初始化连接</button>
+      <div class="quick-accounts">
+        <button onclick="fillAccount('operator')">实验员演示</button>
+        <button onclick="fillAccount('engineer')">工程师演示</button>
+        <button onclick="fillAccount('admin')">管理员演示</button>
+      </div>
+      <p class="hint center">演示账号：operator / engineer / admin，密码均为 123456</p>
+    </section>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/js/api.js"></script>
+  <script>
+    function selectedRole(){ return document.querySelector('input[name="role"]:checked').value; }
+    function fillAccount(role){ username.value=role; password.value='123456'; document.querySelector(`input[value="${role}"]`).checked=true; syncRoles(); }
+    function syncRoles(){ document.querySelectorAll('.role-tile').forEach(x=>x.classList.toggle('active', x.querySelector('input').checked)); }
+    document.querySelectorAll('input[name="role"]').forEach(x=>x.addEventListener('change', syncRoles));
+    async function login(){
+      const payload = {username: username.value, password: password.value, role: selectedRole()};
+      const res = await api('/api/login', {method:'POST', body: JSON.stringify(payload)});
+      if(res.ok){ location.href=res.redirect; }
+    }
+  </script>
+</body>
+</html>

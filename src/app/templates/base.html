@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <title>{% block title %}全自动冰冻切片染色机{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body data-status="{{ state.status.value }}">
+  {% set nav_items = [
+    ('/dashboard','主控台','总览','⌂'),
+    ('/samples','样本','扫码','▦'),
+    ('/reagents','试剂','识别','◉'),
+    ('/configure','配置','脚本','⚙'),
+    ('/run','运行','监控','▶'),
+    ('/engineer','调试','工程','⌁'),
+    ('/admin','管理','后台','☷')
+  ] %}
+  <div class="app-shell">
+    <aside class="side-rail">
+      <div class="brand-card" onclick="location.href='/dashboard'">
+        <div class="brand-orb">郭</div>
+        <div class="brand-copy">
+          <strong>郭博士</strong>
+          <span>Auto Stainer HMI</span>
+        </div>
+      </div>
+      <nav class="nav-stack" aria-label="主导航">
+        {% for href,name,sub,icon in nav_items %}
+        <a href="{{ href }}" class="nav-item" data-href="{{ href }}">
+          <i>{{ icon }}</i><span>{{ name }}</span><small>{{ sub }}</small>
+        </a>
+        {% endfor %}
+      </nav>
+      <div class="operator-card">
+        <div class="avatar">{{ (user.display_name if user else '访')[0] }}</div>
+        <div>
+          <strong>{{ user.display_name if user else '未登录' }}</strong>
+          <span>{{ user.role.value if user else 'guest' }}</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="workbench">
+      <header class="top-panel">
+        <div>
+          <div class="crumb">全自动冰冻切片染色机 / {% block crumb %}控制台{% endblock %}</div>
+          <h1>{% block page_title %}{% endblock %}</h1>
+          <p>{% block page_subtitle %}{% endblock %}</p>
+        </div>
+        <div class="status-cluster">
+          <div class="status-chip status-{{ state.status.value }}"><span></span><b data-status-label>{{ state.status.value }}</b></div>
+          <div class="mini-metric"><span>样本</span><b>{{ slide_count }}</b></div>
+          <div class="mini-metric"><span>试剂</span><b>{{ state.reagents|length }}</b></div>
+          <div class="clock-card"><span id="clockTime">--:--</span><small id="clockDate">----</small></div>
+          <button class="icon-btn" onclick="location.href='/dashboard'" title="主控台">⌂</button>
+          <button class="icon-btn danger" onclick="logout()" title="退出">⏻</button>
+        </div>
+      </header>
+
+      {% if state.alarms %}
+      <section class="alert-banner">
+        <div class="pulse-dot"></div>
+        <div><b>当前报警</b><span>{{ state.alarms[0] }}</span></div>
+        <button class="btn btn-soft">查看处理</button>
+      </section>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/js/api.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

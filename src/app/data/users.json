@@ -1,0 +1,23 @@
+[
+  {
+    "username": "operator",
+    "password": "123456",
+    "role": "operator",
+    "display_name": "实验员",
+    "enabled": true
+  },
+  {
+    "username": "engineer",
+    "password": "123456",
+    "role": "engineer",
+    "display_name": "工程师",
+    "enabled": true
+  },
+  {
+    "username": "admin",
+    "password": "123456",
+    "role": "admin",
+    "display_name": "管理员",
+    "enabled": true
+  }
+]

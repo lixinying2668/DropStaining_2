@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block crumb %}运行监控{% endblock %}
+{% block page_title %}运行监控{% endblock %}
+{% block page_subtitle %}4 个通道独立运行；双针加样、通道级清洗、通道级混匀和单片温控在此统一监控。{% endblock %}
+{% block content %}
+<section class="run-command-bar modern-card">
+  <button class="command start" onclick="runAction('start')"><i>▶</i><b>开始</b><span>启动调度</span></button>
+  <button class="command pause" onclick="runAction('pause')"><i>Ⅱ</i><b>暂停</b><span>动作间暂停</span></button>
+  <button class="command resume" onclick="runAction('resume')"><i>↻</i><b>继续</b><span>恢复实验</span></button>
+  <button class="command stop" onclick="runAction('stop')"><i>■</i><b>终止</b><span>安全停止</span></button>
+  <button class="command add" onclick="document.getElementById('addSlidePanel').classList.toggle('hidden')"><i>＋</i><b>中途加片</b><span>空闲通道加入</span></button>
+  <div class="run-badge"><span id="runStatus" class="status-chip status-{{ state.status.value }}"><i></i><b data-status-label>{{ state.status.value }}</b></span><small>{{ state.run_id if state.run_id else '未生成批号' }}</small></div>
+</section>
+
+<section id="addSlidePanel" class="modern-card hidden add-slide-panel">
+  <div class="section-title"><h2>中途添加玻片</h2><span class="badge-soft">仅建议加入空闲或已完成通道</span></div>
+  <div class="inline-form touch-form">
+    <label>通道<input id="addChannel" class="input" type="number" min="1" max="4" value="1"></label>
+    <label>位置<input id="addSlot" class="input" type="number" min="1" max="4" value="1"></label>
+    <label>玻片条码<input id="addBarcode" class="input" value="SLIDE-NEW-001"></label>
+    <label>流程<select id="addProtocol" class="input"><option value="IHC">IHC</option><option value="HE">HE</option></select></label>
+    <label>一抗代码<input id="addAntibody" class="input" value="AB-DEFAULT"></label>
+    <label>温度℃<input id="addTemp" class="input" type="number" min="40" max="55" value="42"></label>
+    <button class="btn btn-primary btn-xl" onclick="addSlide()">添加到调度队列</button>
+  </div>
+</section>
+
+<section class="split-grid wide-left">
+  <article class="modern-card">
+    <div class="section-title"><div><h2>实时通道状态</h2><p>蓝色表示运行，绿色表示完成/就绪，黄色表示等待或暂停，红色表示异常。</p></div><button class="btn btn-soft" onclick="refreshRun()">刷新</button></div>
+    <div id="runChannels" class="runtime-board"></div>
+  </article>
+  <aside class="stack-panel">
+    <article class="modern-card compact-card">
+      <h3>关键执行单元</h3>
+      <div class="module-grid">
+        <div><b>双针机械臂</b><span>SDK 模拟</span><em>READY</em></div>
+        <div><b>清洗泵 P1-P4</b><span>通道级</span><em>READY</em></div>
+        <div><b>混匀电机 M1-M4</b><span>通道同步</span><em>READY</em></div>
+        <div><b>加热模块</b><span>单片温控</span><em>{{ state.system.current_temperature_c }}℃</em></div>
+      </div>
+    </article>
+    <article class="modern-card compact-card">
+      <h3>运行日志</h3>
+      <div id="logList" class="log-console"></div>
+    </article>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/run.js"></script>{% endblock %}

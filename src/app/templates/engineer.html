@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block crumb %}工程师调试{% endblock %}
+{% block page_title %}工程师调试{% endblock %}
+{% block page_subtitle %}面向维护人员的硬件独立测试入口：通讯、坐标、扫码、移液、清洗、混匀、加热与制冷。{% endblock %}
+{% block content %}
+<section class="engineer-layout">
+  <article class="modern-card engineer-card">
+    <div class="section-title"><h2>通讯与初始化</h2><span class="badge-soft">COM / SDK</span></div>
+    <div class="form-grid-mini">
+      <label>COM口<input id="serialPort" class="input" value="COM1"></label>
+      <label>波特率<input id="baudRate" class="input" value="115200"></label>
+    </div>
+    <div class="button-row"><button class="btn btn-primary" onclick="engineerCommand('serial','connect')">连接测试</button><button class="btn btn-soft" onclick="engineerCommand('arm','home')">机械臂回零</button></div>
+  </article>
+
+  <article class="modern-card engineer-card">
+    <div class="section-title"><h2>扫码器配置</h2><span class="badge-soft">DCR55</span></div>
+    <div class="button-grid">
+      <button class="btn btn-soft" onclick="engineerCommand('scanner','trigger_once')">单次触发</button>
+      <button class="btn btn-soft" onclick="engineerCommand('scanner','trigger_continuous')">连续触发</button>
+      <button class="btn btn-soft" onclick="engineerCommand('scanner','roi_set')">设置 ROI</button>
+      <button class="btn btn-soft" onclick="engineerCommand('scanner','light_on')">校验光</button>
+    </div>
+  </article>
+
+  <article class="modern-card engineer-card">
+    <div class="section-title"><h2>清洗泵</h2><span class="badge-soft">P1-P4</span></div>
+    <div class="form-grid-mini">
+      <label>通道<input id="pumpChannel" class="input" type="number" min="1" max="4" value="1"></label>
+      <label>时间s<input id="pumpDuration" class="input" type="number" value="10"></label>
+    </div>
+    <button class="btn btn-primary full" onclick="testPump()">启动通道清洗</button>
+  </article>
+
+  <article class="modern-card engineer-card">
+    <div class="section-title"><h2>混匀 / 加热</h2><span class="badge-soft">通道级 / 单片级</span></div>
+    <div class="form-grid-mini">
+      <label>通道<input id="mixChannel" class="input" type="number" min="1" max="4" value="1"></label>
+      <label>温度℃<input id="targetTemp" class="input" type="number" value="42"></label>
+    </div>
+    <div class="button-row"><button class="btn btn-soft" onclick="engineerCommand('mixer','start')">混匀测试</button><button class="btn btn-primary" onclick="engineerCommand('heater','set_temperature')">设定温度</button></div>
+  </article>
+
+  <article class="modern-card engineer-card wide">
+    <div class="section-title"><h2>通道移液测试</h2><span class="badge-soft">双针 / 液面探测 / 清空通道</span></div>
+    <div class="inline-form touch-form">
+      <label>动作<select id="pipetteAction" class="input"><option value="aspirate">吸液</option><option value="dispense">打液</option><option value="flush">打系统液</option><option value="lld">液面探测</option><option value="purge">清空通道</option></select></label>
+      <label>孔位<input id="wellPosition" class="input" value="R1"></label>
+      <label>体积 μL<input id="pipetteVolume" class="input" type="number" value="100"></label>
+      <button class="btn btn-primary btn-xl" onclick="testPipette()">执行移液动作</button>
+    </div>
+  </article>
+
+  <article class="modern-card engineer-card wide">
+    <div class="section-title"><h2>坐标与液体类型</h2><span class="badge-soft">参数页面占位</span></div>
+    <div class="param-panels">
+      <div><h3>通道移位</h3><p>试剂位 R1-R40、洗针槽、16 个玻片位 X/Y/Z 坐标；Z-Travel、Z-Start、Z-End、Z-Dispense。</p></div>
+      <div><h3>Liquid Class</h3><p>吸液速度、排液速度、空气段、额外体积、吹出体积、回撤速度。</p></div>
+      <div><h3>安全联锁</h3><p>门禁、废液满、排毒桶、纯水余量、机械臂限位、温控超限。</p></div>
+    </div>
+  </article>
+</section>
+
+<section class="modern-card">
+  <div class="section-title"><h2>调试返回</h2><button class="btn btn-soft" onclick="engineerResult.textContent='等待命令...'">清空</button></div>
+  <pre id="engineerResult" class="terminal">等待命令...</pre>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/engineer.js"></script>{% endblock %}

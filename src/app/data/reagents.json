@@ -1,0 +1,122 @@
+[
+  {
+    "position": "R1",
+    "barcode": "BLOCK-001",
+    "name": "内源性酶阻断剂",
+    "code": "BLOCK",
+    "reagent_type": "common",
+    "volume_ml": 20,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R2",
+    "barcode": "AB-DEFAULT-001",
+    "name": "一抗默认",
+    "code": "AB-DEFAULT",
+    "reagent_type": "primary",
+    "volume_ml": 10,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R3",
+    "barcode": "AB-CK-001",
+    "name": "一抗 CK",
+    "code": "AB-CK",
+    "reagent_type": "primary",
+    "volume_ml": 10,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R4",
+    "barcode": "SECONDARY-001",
+    "name": "二抗试剂 A",
+    "code": "SECONDARY",
+    "reagent_type": "secondary",
+    "volume_ml": 20,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R5",
+    "barcode": "DAB-A-001",
+    "name": "DAB A液",
+    "code": "DAB-A",
+    "reagent_type": "dab",
+    "volume_ml": 5,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R6",
+    "barcode": "DAB-B-001",
+    "name": "DAB B液",
+    "code": "DAB-B",
+    "reagent_type": "dab",
+    "volume_ml": 5,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R7",
+    "barcode": "WATER-001",
+    "name": "纯水",
+    "code": "WATER",
+    "reagent_type": "water",
+    "volume_ml": 50,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R8",
+    "barcode": "HEM-001",
+    "name": "苏木素",
+    "code": "HEMATOXYLIN",
+    "reagent_type": "common",
+    "volume_ml": 15,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R9",
+    "barcode": "WASH-001",
+    "name": "清洗液",
+    "code": "WASH",
+    "reagent_type": "wash",
+    "volume_ml": 100,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  },
+  {
+    "position": "R10",
+    "barcode": "SECONDARY-002",
+    "name": "二抗试剂 B",
+    "code": "SECONDARY",
+    "reagent_type": "secondary",
+    "volume_ml": 20,
+    "min_alarm_ml": 1.0,
+    "available": true,
+    "lot_no": "LOT202606",
+    "expire_date": "2027-06-01"
+  }
+]

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block crumb %}主控台{% endblock %}
+{% block page_title %}主控台{% endblock %}
+{% block page_subtitle %}面向触屏的一站式实验工作台：初始化、扫描、配置、运行与报警状态集中展示。{% endblock %}
+{% block content %}
+<section class="workflow-strip">
+  <article class="workflow-step {{ 'done' if state.initialized else 'active' }}" onclick="initializeSystem()"><i>01</i><b>仪器初始化</b><span>回零 / 制冷 / 液位 / 洗针</span></article>
+  <article class="workflow-step {{ 'done' if slide_count else '' }}" onclick="location.href='/samples'"><i>02</i><b>样本扫描</b><span>4 通道 × 4 玻片</span></article>
+  <article class="workflow-step {{ 'done' if state.reagents else '' }}" onclick="location.href='/reagents'"><i>03</i><b>试剂识别</b><span>5 列 × 8 瓶位</span></article>
+  <article class="workflow-step" onclick="location.href='/configure'"><i>04</i><b>实验配置</b><span>脚本 / 一抗 / 温度</span></article>
+  <article class="workflow-step {{ 'active' if state.status.value == 'running' else '' }}" onclick="location.href='/run'"><i>05</i><b>开始运行</b><span>暂停 / 继续 / 终止</span></article>
+</section>
+
+<section class="kpi-grid">
+  <article class="kpi-card primary">
+    <span>系统状态</span><strong>{{ '已初始化' if state.initialized else '待初始化' }}</strong>
+    <small>{{ state.status.value }}</small>
+    <button class="btn btn-light full" onclick="initializeSystem()">执行初始化</button>
+  </article>
+  <article class="kpi-card">
+    <span>玻片样本</span><strong>{{ slide_count }}</strong><small>最大 16 张，支持分批上载</small>
+    <button class="btn btn-soft full" onclick="location.href='/samples'">进入样本扫描</button>
+  </article>
+  <article class="kpi-card">
+    <span>已识别试剂</span><strong>{{ state.reagents|length }}</strong><small>5 列试剂架，条码定位</small>
+    <button class="btn btn-soft full" onclick="location.href='/reagents'">进入试剂扫描</button>
+  </article>
+  <article class="kpi-card">
+    <span>运行批号</span><strong>{{ state.run_id[-6:] if state.run_id else '--' }}</strong><small>{{ state.run_id if state.run_id else '尚未开始实验' }}</small>
+    <button class="btn btn-primary full" onclick="location.href='/run'">运行监控</button>
+  </article>
+</section>
+
+<section class="split-grid wide-left">
+  <article class="modern-card">
+    <div class="section-title">
+      <div><h2>通道总览</h2><p>通道状态与实体实验舱一一对应，支持独立运行和独立更换。</p></div>
+      <div class="legend"><span class="legend-dot idle"></span>空闲 <span class="legend-dot running"></span>运行 <span class="legend-dot warn"></span>报警/暂停</div>
+    </div>
+    <div class="channel-board">
+      {% for ch in state.channels %}
+      <div class="channel-tile status-{{ ch.status.value }} {{ 'selected' if loop.index == 2 else '' }}">
+        <div class="channel-head"><b>{{ ch.name }}</b><span>{{ ch.status.value }}</span></div>
+        <div class="ring" style="--p:{{ ch.progress }}"><em>{{ ch.progress }}%</em></div>
+        <p>{{ ch.current_step }}</p>
+        <div class="slide-rack">
+          {% for i in range(1,5) %}
+            {% set slide = (ch.slides | selectattr('slot', 'equalto', i) | list | first) %}
+            <div class="slide-chip {{ 'loaded' if slide else 'empty' }}">
+              <b>{{ i }}</b><span>{{ slide.protocol_code if slide else '空' }}</span><small>{{ slide.id if slide else 'EMPTY' }}</small>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <aside class="stack-panel">
+    <article class="modern-card compact-card">
+      <h3>准备检查</h3>
+      <div class="check-list">
+        <div><span class="check {{ 'ok' if state.system.robotic_arm_home else '' }}"></span>机械臂回原点</div>
+        <div><span class="check {{ 'ok' if state.system.reagent_cooling else '' }}"></span>试剂制冷 {{ state.system.reagent_temperature_c }}℃</div>
+        <div><span class="check {{ 'ok' if state.system.scanner_online else '' }}"></span>扫码器通信</div>
+        <div><span class="check {{ 'ok' if state.system.liquid_sensor else '' }}"></span>液位传感器</div>
+        <div><span class="check {{ 'ok' if state.system.needle_wash else '' }}"></span>洗针状态</div>
+      </div>
+    </article>
+    <article class="modern-card compact-card tank-card">
+      <h3>液路状态</h3>
+      <div class="tank-row"><b>纯水</b><div><span style="width:82%"></span></div><em>OK</em></div>
+      <div class="tank-row"><b>PBS/清洗液</b><div><span style="width:76%"></span></div><em>OK</em></div>
+      <div class="tank-row"><b>废液桶</b><div class="warn"><span style="width:34%"></span></div><em>34%</em></div>
+      <div class="tank-row"><b>排毒桶</b><div class="warn"><span style="width:22%"></span></div><em>22%</em></div>
+    </article>
+  </aside>
+</section>
+
+<section class="modern-card">
+  <div class="section-title"><h2>最近日志</h2><button class="btn btn-soft" onclick="location.href='/admin'">查看后台记录</button></div>
+  <div class="timeline">
+    {% for item in state.logs[:8] %}<div><i></i><span>{{ item }}</span></div>{% else %}<div><i></i><span>暂无日志</span></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/js/dashboard.js"></script>{% endblock %}

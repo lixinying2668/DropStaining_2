@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block crumb %}系统管理{% endblock %}
+{% block page_title %}管理后台{% endblock %}
+{% block page_subtitle %}用户权限、试剂余量、实验日志、报警记录和后台统计查询。{% endblock %}
+{% block content %}
+<section class="kpi-grid admin-kpi">
+  <article class="kpi-card"><span>用户账号</span><strong>{{ users|length }}</strong><small>角色权限管理</small></article>
+  <article class="kpi-card"><span>试剂记录</span><strong>{{ state.reagents|length }}</strong><small>余量与报警阈值</small></article>
+  <article class="kpi-card"><span>日志条数</span><strong>{{ state.logs|length }}</strong><small>动作与异常追溯</small></article>
+  <article class="kpi-card"><span>报警</span><strong>{{ state.alarms|length }}</strong><small>未处理/历史报警</small></article>
+</section>
+
+<section class="split-grid">
+  <article class="modern-card">
+    <div class="section-title"><h2>用户管理</h2><button class="btn btn-primary">新增用户</button></div>
+    <div class="data-table">
+      <div class="table-row head"><span>用户名</span><span>姓名</span><span>角色</span><span>启用</span></div>
+      {% for u in users %}<div class="table-row"><span>{{ u.username }}</span><span>{{ u.display_name }}</span><span class="badge-soft">{{ u.role }}</span><span>{{ '是' if u.enabled else '否' }}</span></div>{% endfor %}
+    </div>
+  </article>
+  <article class="modern-card">
+    <div class="section-title"><h2>试剂余量</h2><button class="btn btn-soft" onclick="location.href='/reagents'">重新扫描</button></div>
+    <div class="data-table compact-table">
+      <div class="table-row head"><span>位置</span><span>名称</span><span>余量</span><span>阈值</span></div>
+      {% for r in state.reagents[:12] %}<div class="table-row"><span>{{ r.position }}</span><span>{{ r.name }}</span><span>{{ r.volume_ml }}mL</span><span>{{ r.min_alarm_ml }}mL</span></div>{% else %}<div class="empty-state"><b>暂无试剂数据</b><span>请先扫描试剂区。</span></div>{% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="modern-card">
+  <div class="section-title"><h2>报警 / 运行日志</h2><button class="btn btn-soft">导出 CSV</button></div>
+  <div class="timeline large">
+    {% for item in state.logs[:40] %}<div><i></i><span>{{ item }}</span></div>{% else %}<div><i></i><span>暂无日志</span></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}
