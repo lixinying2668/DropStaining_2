@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.Repositories;
+using Stainer.Web.Application.Services;
 using Stainer.Web.Infrastructure.Data;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Repositories;
@@ -19,6 +20,9 @@ public static class ServiceCollectionExtensions
                 .AddInterceptors(new SqlitePragmaConnectionInterceptor()));
         services.AddScoped<ReferenceDataSeeder>();
         services.AddScoped<IReferenceDataRepository, EfReferenceDataRepository>();
+        services.AddScoped<IWorkflowRepository, EfWorkflowRepository>();
+        services.AddScoped<IReagentRepository, EfReagentRepository>();
+        services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
 
         return services;
     }
