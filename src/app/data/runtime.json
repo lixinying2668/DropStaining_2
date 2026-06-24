@@ -289,13 +289,14 @@
     }
   ],
   "active_user": {
-    "username": "admin",
-    "role": "admin",
-    "display_name": "管理员",
+    "username": "operator",
+    "role": "operator",
+    "display_name": "实验员",
     "enabled": true
   },
   "alarms": [],
   "logs": [
+    "[2026-06-24 11:09:58] 用户登录：实验员 / operator",
     "[2026-06-23 17:07:41] 样本区扫描完成：识别到 8 张玻片",
     "[2026-06-23 17:07:40] 样本区扫描完成：识别到 8 张玻片",
     "[2026-06-23 17:07:40] 样本区扫描完成：识别到 8 张玻片",
