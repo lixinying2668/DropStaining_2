@@ -1,9 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Diagnostics;
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -226,6 +229,53 @@ public sealed class RuntimeLedgerExecutorTests
     }
 
     [Fact]
+    public async Task Machine_hub_pushes_temperature_step_and_alarm_events()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var cookie = await LoginAsync(client, "admin", "admin");
+
+        string taskId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            taskId = await CreateConfirmedTaskAsync(dbContext, "IHC-SIGNALR", StainingTaskType.Ihc, "B-02",
+                [
+                    ("PRETREATMENT", "Heat", null, null),
+                    ("DAB", "Dab", "DAB", 100)
+                ],
+                []);
+            var m1 = await dbContext.DabMixPositions.SingleAsync(x => x.Code == "M1");
+            dbContext.DabBatches.Add(new DabBatch
+            {
+                DabMixPositionId = m1.Id,
+                PositionCode = "M1",
+                Status = RuntimeLedgerStatus.Available,
+                RemainingVolumeUl = 500,
+                PreparedAtUtc = DateTimeOffset.UtcNow.AddHours(-4),
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(-1),
+                CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-4)
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        using var socket = await ConnectMachineHubAsync(factory, cookie);
+        var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new
+        {
+            commandId = "cmd-run-create-signalr",
+            stainingTaskIds = new[] { taskId }
+        });
+        await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/start", new { commandId = "cmd-run-start-signalr" });
+
+        var receivedTypes = await ReceiveMachineEventTypesAsync(
+            socket,
+            new HashSet<string>(["temperature.changed", "workflowStep.completed", "alarm.raised"], StringComparer.Ordinal));
+        Assert.Contains("temperature.changed", receivedTypes);
+        Assert.Contains("workflowStep.completed", receivedTypes);
+        Assert.Contains("alarm.raised", receivedTypes);
+    }
+
+    [Fact]
     public async Task Legacy_run_page_start_endpoint_controls_runtime_ledger()
     {
         await using var factory = CreateFactory();
@@ -277,7 +327,7 @@ public sealed class RuntimeLedgerExecutorTests
             });
     }
 
-    private static async Task LoginAsync(HttpClient client, string username, string role)
+    private static async Task<string> LoginAsync(HttpClient client, string username, string role)
     {
         var response = await client.PostAsJsonAsync("/api/login", new
         {
@@ -286,6 +336,9 @@ public sealed class RuntimeLedgerExecutorTests
             role
         });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return response.Headers.GetValues("Set-Cookie")
+            .First(x => x.StartsWith("stainer_session=", StringComparison.OrdinalIgnoreCase))
+            .Split(';', 2)[0];
     }
 
     private static async Task<T> PostJsonAsync<T>(HttpClient client, string url, object request)
@@ -353,6 +406,92 @@ public sealed class RuntimeLedgerExecutorTests
 
         Assert.Fail($"Page state did not reach {status}.");
         throw new UnreachableException();
+    }
+
+    private static async Task<WebSocket> ConnectMachineHubAsync(WebApplicationFactory<Program> factory, string cookie)
+    {
+        var webSocketClient = factory.Server.CreateWebSocketClient();
+        webSocketClient.ConfigureRequest = request => request.Headers["Cookie"] = cookie;
+        var socket = await webSocketClient.ConnectAsync(new Uri("ws://localhost/hubs/machine"), CancellationToken.None);
+        await SendSignalRFrameAsync(socket, "{\"protocol\":\"json\",\"version\":1}");
+        await ReceiveSignalRFramesAsync(socket, TimeSpan.FromSeconds(3));
+        return socket;
+    }
+
+    private static async Task<HashSet<string>> ReceiveMachineEventTypesAsync(WebSocket socket, IReadOnlySet<string> expectedTypes)
+    {
+        var receivedTypes = new HashSet<string>(StringComparer.Ordinal);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        while (!timeout.IsCancellationRequested && !expectedTypes.All(receivedTypes.Contains))
+        {
+            foreach (var frame in await ReceiveSignalRFramesAsync(socket, TimeSpan.FromSeconds(2)))
+            {
+                if (!frame.TryGetProperty("type", out var signalRType) || signalRType.GetInt32() != 1)
+                {
+                    continue;
+                }
+
+                if (!frame.TryGetProperty("target", out var target) || target.GetString() != "machineEvent")
+                {
+                    continue;
+                }
+
+                var machineEvent = frame.GetProperty("arguments")[0];
+                var eventType = machineEvent.GetProperty("type").GetString();
+                if (!string.IsNullOrWhiteSpace(eventType))
+                {
+                    receivedTypes.Add(eventType);
+                }
+            }
+        }
+
+        return receivedTypes;
+    }
+
+    private static async Task SendSignalRFrameAsync(WebSocket socket, string json)
+    {
+        var bytes = Encoding.UTF8.GetBytes(json + '\x1e');
+        await socket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+    }
+
+    private static async Task<IReadOnlyList<JsonElement>> ReceiveSignalRFramesAsync(WebSocket socket, TimeSpan timeout)
+    {
+        var buffer = new byte[8192];
+        var builder = new StringBuilder();
+        using var cancellation = new CancellationTokenSource(timeout);
+        while (!cancellation.IsCancellationRequested)
+        {
+            WebSocketReceiveResult result;
+            try
+            {
+                result = await socket.ReceiveAsync(buffer, cancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return [];
+            }
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                Assert.Fail("Machine hub WebSocket closed before expected events were received.");
+            }
+
+            builder.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+            if (!result.EndOfMessage || !builder.ToString().Contains('\x1e', StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var frames = new List<JsonElement>();
+            foreach (var rawFrame in builder.ToString().Split('\x1e', StringSplitOptions.RemoveEmptyEntries))
+            {
+                using var document = JsonDocument.Parse(rawFrame);
+                frames.Add(document.RootElement.Clone());
+            }
+
+            return frames;
+        }
+
+        return [];
     }
 
     private static async Task<string> CreateConfirmedTaskAsync(

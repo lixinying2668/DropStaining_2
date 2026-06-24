@@ -22,6 +22,8 @@ public static class WebHostEndpointExtensions
 
     public static void MapStainerWebHostEndpoints(this WebApplication app)
     {
+        app.MapHub<MachineHub>(MachineHub.Route);
+
         foreach (var route in PageRoutes)
         {
             var capturedRoute = route;

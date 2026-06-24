@@ -44,9 +44,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RunControlService>();
         services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
-        services.AddSingleton<IRuntimeEventPublisher, InMemoryRuntimeEventPublisher>();
+        services.AddSingleton<InMemoryRuntimeEventPublisher>();
+        services.AddSingleton<IRuntimeEventPublisher>(serviceProvider => serviceProvider.GetRequiredService<InMemoryRuntimeEventPublisher>());
         services.AddSingleton<MachineExecutor>();
         services.AddHostedService<MachineExecutorHostedService>();
+        services.AddHostedService<MachineEventSignalRDispatcher>();
+        services.AddSignalR();
 
         return services;
     }

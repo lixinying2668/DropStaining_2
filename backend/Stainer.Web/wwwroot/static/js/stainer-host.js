@@ -11,9 +11,12 @@ function setText(id, value){
   if(el) el.textContent = value;
 }
 
+window.machineStateSnapshot = null;
+
 async function loadHostState(){
   try{
     const state = await api('/api/state');
+    window.machineStateSnapshot = state;
     renderShellState(state);
     renderDashboard(state);
     renderSamples(state);
@@ -22,6 +25,7 @@ async function loadHostState(){
     renderHistory(state);
     renderAdmin(state);
     renderEngineer(state);
+    renderRunPage(state);
     return state;
   }catch(e){
     return null;
@@ -222,6 +226,135 @@ function renderTimeline(id, items, limit){
   root.innerHTML = (items || []).slice(0, limit).map(item => `<div><i></i><span>${escapeHtml(item)}</span></div>`).join('') || '<div><i></i><span>暂无日志</span></div>';
 }
 
+function renderRunPage(state){
+  const status = document.getElementById('runStatus');
+  if(status){
+    status.className = 'status-chip status-' + state.status;
+    status.innerHTML = '<i></i><b data-status-label>' + statusText(state.status) + '</b>';
+  }
+  setText('runIdSmall', state.runId || 'not started');
+  if(typeof renderChannels === 'function'){
+    renderChannels(state.channels || []);
+  }
+  const logRoot = document.getElementById('logList');
+  if(logRoot){
+    logRoot.innerHTML = (state.logs || []).slice(0,30).map(x => `<div>${escapeHtml(x)}</div>`).join('') || '<div>No events</div>';
+  }
+}
+
+function appendMachineLog(state, event){
+  state.logs = state.logs || [];
+  const message = event.payload?.message || event.type;
+  state.logs.unshift('[' + new Date(event.occurredAtUtc || Date.now()).toLocaleTimeString('zh-CN', {hour12:false}) + '] ' + event.type + ' ' + message);
+  if(state.logs.length > 120) state.logs.length = 120;
+}
+
+function findSlideById(state, slideTaskId){
+  for(const channel of state.channels || []){
+    const slide = (channel.slides || []).find(x => x.id === slideTaskId);
+    if(slide) return slide;
+  }
+  return null;
+}
+
+function applyMachineEvent(event){
+  const state = window.machineStateSnapshot;
+  if(!state || !event) return;
+  const payload = event.payload || {};
+  appendMachineLog(state, event);
+  switch(event.type){
+    case 'machine.stateChanged':
+      state.runId = payload.runId || event.runId || state.runId;
+      state.status = String(payload.status || state.status || '').toLowerCase();
+      break;
+    case 'slideTask.stateChanged': {
+      const slide = findSlideById(state, payload.slideTaskId || event.entityId);
+      if(slide){
+        slide.status = String(payload.status || slide.status || '').toLowerCase();
+        slide.currentStep = payload.currentStep || slide.currentStep;
+      }
+      break;
+    }
+    case 'workflowStep.started':
+    case 'workflowStep.completed': {
+      const slide = findSlideById(state, payload.slideTaskId);
+      if(slide){
+        slide.currentStep = payload.stepName || payload.majorStepCode || slide.currentStep;
+        slide.status = 'running';
+        if(event.type === 'workflowStep.completed') slide.progress = Math.min(100, Number(slide.progress || 0) + 20);
+      }
+      break;
+    }
+    case 'temperature.changed':
+      state.system = state.system || {};
+      state.system.currentTemperatureC = Math.round(Number(payload.currentTemperatureDeciC || 0) / 10);
+      break;
+    case 'alarm.raised':
+      state.alarms = state.alarms || [];
+      state.alarms.unshift((payload.code || 'alarm') + ': ' + (payload.message || ''));
+      break;
+    case 'reagent.bottleDepleted':
+    case 'dab.batchChanged':
+    case 'device.connectionChanged':
+    case 'qr.scanCompleted':
+      break;
+  }
+  renderShellState(state);
+  renderDashboard(state);
+  renderAlerts(state);
+  renderHistory(state);
+  renderEngineer(state);
+  renderRunPage(state);
+}
+
+let machineSocket = null;
+let machineReconnectTimer = null;
+let machineReconnectDelayMs = 1000;
+let machineEverConnected = false;
+
+function machineHubUrl(){
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return scheme + '//' + location.host + '/hubs/machine';
+}
+
+function connectMachineHub(){
+  if(!('WebSocket' in window)) return;
+  if(machineSocket && (machineSocket.readyState === WebSocket.OPEN || machineSocket.readyState === WebSocket.CONNECTING)) return;
+  try{
+    machineSocket = new WebSocket(machineHubUrl());
+    machineSocket.onopen = async () => {
+      machineSocket.send(JSON.stringify({protocol:'json', version:1}) + '\x1e');
+      const wasReconnect = machineEverConnected;
+      machineEverConnected = true;
+      machineReconnectDelayMs = 1000;
+      if(wasReconnect) await loadHostState();
+    };
+    machineSocket.onmessage = event => {
+      String(event.data || '').split('\x1e').filter(Boolean).forEach(frame => {
+        const message = JSON.parse(frame);
+        if(message.type === 1 && message.target === 'machineEvent'){
+          applyMachineEvent(message.arguments && message.arguments[0]);
+        }
+      });
+    };
+    machineSocket.onclose = scheduleMachineReconnect;
+    machineSocket.onerror = () => {
+      try{ machineSocket.close(); }catch(e){}
+    };
+  }catch(e){
+    scheduleMachineReconnect();
+  }
+}
+
+function scheduleMachineReconnect(){
+  if(machineReconnectTimer) return;
+  machineReconnectTimer = setTimeout(() => {
+    machineReconnectTimer = null;
+    connectMachineHub();
+    machineReconnectDelayMs = Math.min(machineReconnectDelayMs * 2, 10000);
+  }, machineReconnectDelayMs);
+}
+
 async function scanSamples(){
   const count = document.getElementById('sampleCount')?.value || 8;
   await api('/api/samples/scan?count=' + count, {method:'POST'});
@@ -341,6 +474,8 @@ async function adminDeleteUser(id){
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  loadHostState().then(renderConfigure);
-  setInterval(loadHostState, 2500);
+  loadHostState().then(() => {
+    renderConfigure();
+    connectMachineHub();
+  });
 });

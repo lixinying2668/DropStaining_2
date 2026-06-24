@@ -100,4 +100,4 @@ async function refreshRun(){
   const logRoot = document.getElementById('logList');
   if(logRoot){ logRoot.innerHTML = state.logs.slice(0,30).map(x=>`<div>${x}</div>`).join('') || '<div>暂无日志</div>'; }
 }
-document.addEventListener('DOMContentLoaded',()=>{ refreshRun(); setInterval(refreshRun, 1400); });
+document.addEventListener('DOMContentLoaded',()=>{ refreshRun(); window.refreshRunView = refreshRun; });

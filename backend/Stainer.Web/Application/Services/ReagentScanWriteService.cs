@@ -10,7 +10,8 @@ namespace Stainer.Web.Application.Services;
 public sealed class ReagentScanWriteService(
     StainerDbContext dbContext,
     IReagentBarcodeParser barcodeParser,
-    CommandIdempotencyService idempotencyService)
+    CommandIdempotencyService idempotencyService,
+    IRuntimeEventPublisher eventPublisher)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -183,6 +184,20 @@ public sealed class ReagentScanWriteService(
                     Message = JsonSerializer.Serialize(new { emptyCount, validCount, invalidCount }, JsonOptions),
                     CreatedAtUtc = now
                 });
+                eventPublisher.Publish(MachineEventMessage.Create(
+                    MachineEventTypes.QrScanCompleted,
+                    null,
+                    "ReagentScanSession",
+                    session.Id,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["scanSessionId"] = session.Id,
+                        ["emptyCount"] = emptyCount,
+                        ["validCount"] = validCount,
+                        ["invalidCount"] = invalidCount,
+                        ["message"] = "Reagent scan confirmed."
+                    }));
 
                 return new CommandExecutionResult<ReagentScanConfirmationResponse>(
                     new ReagentScanConfirmationResponse(

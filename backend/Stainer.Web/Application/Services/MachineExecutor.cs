@@ -151,7 +151,19 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         run.PauseRequested = false;
         run.StopRequested = false;
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(runId, "run.running", "Run started or resumed.");
+        PublishMachineState(run, "Run started or resumed.");
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.DeviceConnectionChanged,
+            run.Id,
+            "MachineRun",
+            run.Id,
+            "engineer",
+            new Dictionary<string, object?>
+            {
+                ["connected"] = true,
+                ["adapter"] = "Mock",
+                ["message"] = "Mock device connection is available."
+            }));
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -235,6 +247,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         };
         dbContext.DeviceCommandExecutions.Add(command);
         await dbContext.SaveChangesAsync(cancellationToken);
+        PublishSlideTaskState(run.Id, step.WorkflowExecution.SlideTask, step.StepName);
+        PublishWorkflowStep(run.Id, step, MachineEventTypes.WorkflowStepStarted);
 
         command.Status = DeviceCommandStatus.CommandSent;
         command.CommandSentAtUtc = DateTimeOffset.UtcNow;
@@ -254,7 +268,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         step.Status = ok ? RuntimeLedgerStatus.Completed : RuntimeLedgerStatus.Failed;
         step.CompletedAtUtc = DateTimeOffset.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(run.Id, ok ? "step.completed" : "step.failed", $"{step.MajorStepCode}/{step.StepName}");
+        PublishWorkflowStep(run.Id, step, MachineEventTypes.WorkflowStepCompleted);
+        PublishSlideTaskState(run.Id, step.WorkflowExecution.SlideTask, step.StepName);
 
         if (!ok)
         {
@@ -275,6 +290,25 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         if (IsDabStep(step))
         {
             return await ApplyDabAsync(dbContext, run, step, command, cancellationToken);
+        }
+
+        if (IsTemperatureStep(step))
+        {
+            eventPublisher.Publish(MachineEventMessage.Create(
+                MachineEventTypes.TemperatureChanged,
+                run.Id,
+                "WorkflowStepExecution",
+                step.Id,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["workflowStepExecutionId"] = step.Id,
+                    ["slideTaskId"] = step.WorkflowExecution?.SlideTaskId,
+                    ["majorStepCode"] = step.MajorStepCode,
+                    ["currentTemperatureDeciC"] = 420,
+                    ["targetTemperatureDeciC"] = 420,
+                    ["message"] = "Mock temperature reached target."
+                }));
         }
 
         if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
@@ -358,6 +392,20 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
             if (bottle.RemainingVolumeUl == 0)
             {
                 await AddAlarmAsync(dbContext, run.Id, "reagent_depleted", "Warning", $"Bottle {bottle.FullBarcode} for {reagentCode} is depleted.", cancellationToken);
+                eventPublisher.Publish(MachineEventMessage.Create(
+                    MachineEventTypes.ReagentBottleDepleted,
+                    run.Id,
+                    "ReagentBottle",
+                    bottle.Id,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["reagentBottleId"] = bottle.Id,
+                        ["fullBarcode"] = bottle.FullBarcode,
+                        ["reagentCode"] = reagentCode,
+                        ["remainingVolumeUl"] = bottle.RemainingVolumeUl,
+                        ["message"] = $"Bottle {bottle.FullBarcode} for {reagentCode} is depleted."
+                    }));
             }
         }
 
@@ -383,6 +431,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
             foreach (var batch in expired)
             {
                 batch.Status = RuntimeLedgerStatus.Expired;
+                PublishDabBatchChanged(run.Id, batch, "expired");
             }
 
             await AddAlarmAsync(dbContext, run.Id, "dab_expired", "Critical", "A DAB batch is expired. Clean DAB mix positions before continuing.", cancellationToken);
@@ -421,6 +470,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
                 CreatedAtUtc = now
             };
             dbContext.DabBatches.Add(dabBatch);
+            PublishDabBatchChanged(run.Id, dabBatch, "prepared");
             dbContext.DeviceCommandExecutions.Add(new DeviceCommandExecution
             {
                 MachineRunId = run.Id,
@@ -437,6 +487,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         }
 
         dabBatch.RemainingVolumeUl -= volume;
+        PublishDabBatchChanged(run.Id, dabBatch, "consumed");
         dbContext.DabBatchUsages.Add(new DabBatchUsage
         {
             DabBatch = dabBatch,
@@ -522,7 +573,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
             CreatedAtUtc = DateTimeOffset.UtcNow
         });
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(runId, "run.redo", $"Redo major step {major}.");
+        PublishMachineState(run, $"Redo major step {major}.");
     }
 
     private async Task<bool> ValidateMockDeviceStateAsync(StainerDbContext dbContext, MachineRun run, CancellationToken cancellationToken)
@@ -589,7 +640,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         run.Status = RuntimeLedgerStatus.Paused;
         run.PauseRequested = true;
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(runId, "run.paused", "Run paused after current atomic action.");
+        PublishMachineState(run, "Run paused after current atomic action.");
     }
 
     private async Task StopRunAsync(StainerDbContext dbContext, string runId, CancellationToken cancellationToken)
@@ -609,7 +660,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(runId, "run.stopped", "Run stopped after current atomic action.");
+        PublishMachineState(run, "Run stopped after current atomic action.");
     }
 
     private async Task FaultRunAsync(StainerDbContext dbContext, string runId, string stepId, string message, CancellationToken cancellationToken)
@@ -630,7 +681,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         run.FaultMessage = message;
         await AddAlarmAsync(dbContext, runId, "mock_fault", "Critical", message, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(runId, "run.faulted", message);
+        PublishMachineState(run, message);
     }
 
     private async Task CompleteRunAsync(StainerDbContext dbContext, MachineRun run, CancellationToken cancellationToken)
@@ -646,14 +697,14 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-        eventPublisher.Publish(run.Id, "run.completed", "Run completed and slides are waiting unload.");
+        PublishMachineState(run, "Run completed and slides are waiting unload.");
     }
 
     private async Task AddAlarmAsync(StainerDbContext dbContext, string runId, string code, string severity, string message, CancellationToken cancellationToken)
     {
         if (!await dbContext.Alarms.AnyAsync(x => x.MachineRunId == runId && x.Code == code && x.Status == "Active", cancellationToken))
         {
-            dbContext.Alarms.Add(new Alarm
+            var alarm = new Alarm
             {
                 MachineRunId = runId,
                 Code = code,
@@ -661,8 +712,104 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
                 Message = message,
                 Status = "Active",
                 CreatedAtUtc = DateTimeOffset.UtcNow
-            });
+            };
+            dbContext.Alarms.Add(alarm);
+            eventPublisher.Publish(MachineEventMessage.Create(
+                MachineEventTypes.AlarmRaised,
+                runId,
+                "Alarm",
+                alarm.Id,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["alarmId"] = alarm.Id,
+                    ["code"] = code,
+                    ["severity"] = severity,
+                    ["status"] = alarm.Status,
+                    ["message"] = message
+                }));
         }
+    }
+
+    private void PublishMachineState(MachineRun run, string message)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.MachineStateChanged,
+            run.Id,
+            "MachineRun",
+            run.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["runId"] = run.Id,
+                ["runCode"] = run.RunCode,
+                ["status"] = run.Status,
+                ["currentMajorStepCode"] = run.CurrentMajorStepCode,
+                ["faultMessage"] = run.FaultMessage,
+                ["message"] = message
+            }));
+    }
+
+    private void PublishSlideTaskState(string runId, SlideTask slideTask, string? currentStep)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.SlideTaskStateChanged,
+            runId,
+            "SlideTask",
+            slideTask.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["slideTaskId"] = slideTask.Id,
+                ["slotCode"] = slideTask.SlotCode,
+                ["taskType"] = slideTask.TaskType,
+                ["status"] = slideTask.Status,
+                ["currentStep"] = currentStep
+            }));
+    }
+
+    private void PublishWorkflowStep(string runId, WorkflowStepExecution step, string eventType)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            eventType,
+            runId,
+            "WorkflowStepExecution",
+            step.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["workflowStepExecutionId"] = step.Id,
+                ["workflowExecutionId"] = step.WorkflowExecutionId,
+                ["slideTaskId"] = step.WorkflowExecution?.SlideTaskId,
+                ["stepNo"] = step.StepNo,
+                ["majorStepCode"] = step.MajorStepCode,
+                ["stepName"] = step.StepName,
+                ["actionType"] = step.ActionType,
+                ["reagentCode"] = step.ReagentCode,
+                ["volumeUl"] = step.VolumeUl,
+                ["status"] = step.Status,
+                ["redoCount"] = step.RedoCount
+            }));
+    }
+
+    private void PublishDabBatchChanged(string runId, DabBatch batch, string changeType)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.DabBatchChanged,
+            runId,
+            "DabBatch",
+            batch.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["dabBatchId"] = batch.Id,
+                ["positionCode"] = batch.PositionCode,
+                ["status"] = batch.Status,
+                ["changeType"] = changeType,
+                ["remainingVolumeUl"] = batch.RemainingVolumeUl,
+                ["preparedAtUtc"] = batch.PreparedAtUtc,
+                ["expiresAtUtc"] = batch.ExpiresAtUtc
+            }));
     }
 
     private async Task<MachineRun?> LoadRunAsync(StainerDbContext dbContext, string runId, CancellationToken cancellationToken)
@@ -683,6 +830,14 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         return step.MajorStepCode.Contains("DAB", StringComparison.OrdinalIgnoreCase)
             || step.ActionType.Contains("DAB", StringComparison.OrdinalIgnoreCase)
             || string.Equals(step.ReagentCode, "DAB", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTemperatureStep(WorkflowStepExecution step)
+    {
+        return step.MajorStepCode.Contains("HEAT", StringComparison.OrdinalIgnoreCase)
+            || step.MajorStepCode.Contains("TEMP", StringComparison.OrdinalIgnoreCase)
+            || step.ActionType.Contains("HEAT", StringComparison.OrdinalIgnoreCase)
+            || step.ActionType.Contains("TEMP", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record MachineExecutorCommand(string RunId, string Type, string? Payload);

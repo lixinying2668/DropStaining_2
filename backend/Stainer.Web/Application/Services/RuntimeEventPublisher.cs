@@ -1,29 +1,107 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 
 namespace Stainer.Web.Application.Services;
 
 public interface IRuntimeEventPublisher
 {
     void Publish(string runId, string eventType, string message);
+    void Publish(MachineEventMessage message);
 }
 
 public sealed class InMemoryRuntimeEventPublisher : IRuntimeEventPublisher
 {
-    private readonly ConcurrentQueue<RuntimeEvent> events = new();
+    private readonly Channel<MachineEventMessage> channel = Channel.CreateUnbounded<MachineEventMessage>(new UnboundedChannelOptions
+    {
+        SingleReader = true,
+        SingleWriter = false
+    });
+    private readonly ConcurrentQueue<MachineEventMessage> events = new();
 
     public void Publish(string runId, string eventType, string message)
     {
-        events.Enqueue(new RuntimeEvent(runId, eventType, message, DateTimeOffset.UtcNow));
+        var mappedType = eventType switch
+        {
+            "step.completed" => MachineEventTypes.WorkflowStepCompleted,
+            "step.failed" => MachineEventTypes.WorkflowStepCompleted,
+            "run.paused" or "run.stopped" or "run.completed" or "run.faulted" or "run.running" or "run.redo" => MachineEventTypes.MachineStateChanged,
+            _ => MachineEventTypes.MachineStateChanged
+        };
+        Publish(MachineEventMessage.Create(
+            mappedType,
+            runId,
+            "MachineRun",
+            runId,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["message"] = message,
+                ["legacyEventType"] = eventType
+            }));
+    }
+
+    public void Publish(MachineEventMessage message)
+    {
+        events.Enqueue(message);
+        channel.Writer.TryWrite(message);
         while (events.Count > 500)
         {
             events.TryDequeue(out _);
         }
     }
 
-    public IReadOnlyList<RuntimeEvent> Snapshot()
+    public IAsyncEnumerable<MachineEventMessage> ReadAllAsync(CancellationToken cancellationToken)
+    {
+        return channel.Reader.ReadAllAsync(cancellationToken);
+    }
+
+    public IReadOnlyList<MachineEventMessage> Snapshot()
     {
         return events.ToArray();
     }
 }
 
-public sealed record RuntimeEvent(string RunId, string EventType, string Message, DateTimeOffset CreatedAtUtc);
+public static class MachineEventTypes
+{
+    public const string MachineStateChanged = "machine.stateChanged";
+    public const string SlideTaskStateChanged = "slideTask.stateChanged";
+    public const string WorkflowStepStarted = "workflowStep.started";
+    public const string WorkflowStepCompleted = "workflowStep.completed";
+    public const string TemperatureChanged = "temperature.changed";
+    public const string ReagentBottleDepleted = "reagent.bottleDepleted";
+    public const string DabBatchChanged = "dab.batchChanged";
+    public const string AlarmRaised = "alarm.raised";
+    public const string AlarmAcknowledged = "alarm.acknowledged";
+    public const string DeviceConnectionChanged = "device.connectionChanged";
+    public const string QrScanCompleted = "qr.scanCompleted";
+}
+
+public sealed record MachineEventMessage(
+    string EventId,
+    string Type,
+    DateTimeOffset OccurredAtUtc,
+    string? RunId,
+    string? EntityType,
+    string? EntityId,
+    string? RequiredRole,
+    IReadOnlyDictionary<string, object?> Payload)
+{
+    public static MachineEventMessage Create(
+        string type,
+        string? runId,
+        string? entityType,
+        string? entityId,
+        string? requiredRole,
+        IReadOnlyDictionary<string, object?> payload)
+    {
+        return new MachineEventMessage(
+            Guid.NewGuid().ToString("N"),
+            type,
+            DateTimeOffset.UtcNow,
+            runId,
+            entityType,
+            entityId,
+            requiredRole,
+            payload);
+    }
+}
