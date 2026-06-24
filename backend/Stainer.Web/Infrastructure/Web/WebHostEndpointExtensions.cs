@@ -29,7 +29,8 @@ public static class WebHostEndpointExtensions
         }
 
         app.MapGet("/api/system/info", (MockRuntimeStore store) => Results.Ok(store.SystemInfo()));
-        app.MapGet("/api/state", (MockRuntimeStore store) => Results.Ok(store.GetState()));
+        app.MapGet("/api/state", async (RuntimePageBridgeService bridge, CancellationToken cancellationToken) =>
+            Results.Ok(await bridge.GetStateAsync(cancellationToken)));
         app.MapGet("/api/current-user", async (HttpContext context, UserSessionService sessionService, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -163,15 +164,91 @@ public static class WebHostEndpointExtensions
                 _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.ValidateAsync(cancellationToken));
             }));
+        app.MapPost("/api/runs", async (HttpContext context, CreateMachineRunRequest request, UserSessionService sessionService, MachineRunService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.CreateRunAsync(request, actor, cancellationToken));
+            }));
+        app.MapGet("/api/runs/current", async (HttpContext context, UserSessionService sessionService, MachineRunQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var run = await service.GetCurrentAsync(cancellationToken);
+                return run is null ? Results.NotFound() : Results.Ok(run);
+            }));
+        app.MapGet("/api/runs/{id}", async (HttpContext context, string id, UserSessionService sessionService, MachineRunQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var run = await service.GetAsync(id, cancellationToken);
+                return run is null ? Results.NotFound() : Results.Ok(run);
+            }));
+        app.MapPost("/api/runs/{id}/start", async (HttpContext context, string id, RunCommandRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.StartAsync(id, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/runs/{id}/pause", async (HttpContext context, string id, RunCommandRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.PauseAsync(id, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/runs/{id}/resume", async (HttpContext context, string id, RunCommandRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.ResumeAsync(id, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/runs/{id}/stop", async (HttpContext context, string id, RunCommandRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.StopAsync(id, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/runs/{id}/fault", async (HttpContext context, string id, InjectFaultRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.InjectFaultAsync(id, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/runs/{id}/redo-current-major-step", async (HttpContext context, string id, RedoMajorStepRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.RedoCurrentMajorStepAsync(id, request, actor, cancellationToken));
+            }));
 
         app.MapPost("/api/system/initialize", (MockRuntimeStore store) => Results.Ok(store.Initialize()));
         app.MapPost("/api/system/reset", (MockRuntimeStore store) => Results.Ok(store.Reset()));
         app.MapPost("/api/samples/scan", (MockRuntimeStore store, int? count) => Results.Ok(store.ScanSamples(count ?? 8)));
         app.MapPost("/api/reagents/scan", (MockRuntimeStore store) => Results.Ok(store.ScanReagents()));
-        app.MapPost("/api/run/start", (MockRuntimeStore store) => Results.Ok(store.RunAction("start")));
-        app.MapPost("/api/run/pause", (MockRuntimeStore store) => Results.Ok(store.RunAction("pause")));
-        app.MapPost("/api/run/resume", (MockRuntimeStore store) => Results.Ok(store.RunAction("resume")));
-        app.MapPost("/api/run/stop", (MockRuntimeStore store) => Results.Ok(store.RunAction("stop")));
+        app.MapPost("/api/run/start", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await bridge.RunActionAsync("start", actor, cancellationToken));
+            }));
+        app.MapPost("/api/run/pause", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await bridge.RunActionAsync("pause", actor, cancellationToken));
+            }));
+        app.MapPost("/api/run/resume", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await bridge.RunActionAsync("resume", actor, cancellationToken));
+            }));
+        app.MapPost("/api/run/stop", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await bridge.RunActionAsync("stop", actor, cancellationToken));
+            }));
         app.MapPost("/api/slides/configure", (MockRuntimeStore store, SlideConfigureRequest request) =>
         {
             try

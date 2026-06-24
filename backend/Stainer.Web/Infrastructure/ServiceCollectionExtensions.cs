@@ -4,6 +4,7 @@ using Stainer.Web.Application.Services;
 using Stainer.Web.Infrastructure.Data;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Repositories;
+using Stainer.Web.Infrastructure.Web;
 
 namespace Stainer.Web.Infrastructure;
 
@@ -38,7 +39,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ReagentScanWriteService>();
         services.AddScoped<EngineeringWriteService>();
         services.AddScoped<PreflightValidationService>();
+        services.AddScoped<MachineRunService>();
+        services.AddScoped<MachineRunQueryService>();
+        services.AddScoped<RunControlService>();
+        services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
+        services.AddSingleton<IRuntimeEventPublisher, InMemoryRuntimeEventPublisher>();
+        services.AddSingleton<MachineExecutor>();
+        services.AddHostedService<MachineExecutorHostedService>();
 
         return services;
     }
