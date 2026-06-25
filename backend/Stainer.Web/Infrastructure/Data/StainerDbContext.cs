@@ -89,12 +89,14 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public override int SaveChanges()
     {
         ValidateWorkflowVersionChanges();
+        EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return base.SaveChanges();
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateWorkflowVersionChanges();
+        EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
@@ -106,6 +108,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         await ValidateWorkflowVersionChangesAsync(cancellationToken);
+        EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
@@ -123,6 +126,25 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
 
         var mappingStatuses = LoadCurrentWorkflowVersionStatuses(changedMappingVersionIds);
         EnsureMappingsPointToPublishedVersions(changedMappingVersionIds, mappingStatuses);
+    }
+
+    private void EnsureWorkflowAssignmentHistoryIsAppendOnly()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries<WorkflowAssignmentHistory>())
+        {
+            if (entry.State == EntityState.Added
+                && string.IsNullOrWhiteSpace(entry.Entity.OperatorUserId)
+                && !string.IsNullOrWhiteSpace(entry.Entity.ActorUserId))
+            {
+                entry.Entity.OperatorUserId = entry.Entity.ActorUserId;
+            }
+        }
+
+        if (ChangeTracker.Entries<WorkflowAssignmentHistory>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Workflow assignment history is append-only and cannot be modified or deleted.");
+        }
     }
 
     private async Task ValidateWorkflowVersionChangesAsync(CancellationToken cancellationToken)
@@ -932,13 +954,20 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         histories.Property(x => x.NewWorkflowSnapshotJson).HasColumnName("new_workflow_snapshot_json").HasMaxLength(40000);
         histories.Property(x => x.ActionType).HasColumnName("action_type").HasMaxLength(64).IsRequired();
         histories.Property(x => x.ActorUserId).HasColumnName("actor_user_id").HasMaxLength(36);
+        histories.Property(x => x.OperatorUserId).HasColumnName("operator_user_id").HasMaxLength(36);
         histories.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         histories.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(2000).IsRequired();
         histories.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128);
+        histories.Property(x => x.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128);
         histories.HasIndex(x => new { x.ChannelBatchId, x.CreatedAtUtc });
+        histories.HasIndex(x => new { x.ChannelBatchId, x.ActionType, x.CreatedAtUtc });
+        histories.HasIndex(x => x.ActionType);
+        histories.HasIndex(x => x.CreatedAtUtc);
         histories.HasIndex(x => x.CommandId);
-        histories.HasOne(x => x.ChannelBatch).WithMany(x => x.WorkflowAssignmentHistory).HasForeignKey(x => x.ChannelBatchId).OnDelete(DeleteBehavior.Cascade);
+        histories.HasIndex(x => x.CorrelationId);
+        histories.HasOne(x => x.ChannelBatch).WithMany(x => x.WorkflowAssignmentHistory).HasForeignKey(x => x.ChannelBatchId).OnDelete(DeleteBehavior.Restrict);
         histories.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.SetNull);
+        histories.HasOne(x => x.OperatorUser).WithMany().HasForeignKey(x => x.OperatorUserId).OnDelete(DeleteBehavior.SetNull);
 
         var slides = modelBuilder.Entity<SlideTask>();
         slides.ToTable("slide_tasks");

@@ -28,7 +28,8 @@ public static class WorkflowAssignmentAction
 {
     public const string InitialSelection = "InitialSelection";
     public const string PreStartChange = "PreStartChange";
-    public const string Lock = "Lock";
+    public const string Locked = "Locked";
+    public const string Lock = Locked;
     public const string Backfill = "Backfill";
     public const string ManualResolutionRequired = "ManualResolutionRequired";
 }

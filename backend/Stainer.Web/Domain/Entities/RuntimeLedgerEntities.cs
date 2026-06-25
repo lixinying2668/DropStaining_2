@@ -40,12 +40,15 @@ public sealed class WorkflowAssignmentHistory
     public string? NewWorkflowSnapshotJson { get; set; }
     public string ActionType { get; set; } = WorkflowAssignmentAction.InitialSelection;
     public string? ActorUserId { get; set; }
+    public string? OperatorUserId { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string Reason { get; set; } = string.Empty;
     public string? CommandId { get; set; }
+    public string? CorrelationId { get; set; }
 
     public ChannelBatch? ChannelBatch { get; set; }
     public User? ActorUser { get; set; }
+    public User? OperatorUser { get; set; }
 }
 
 public sealed class SlideTask
