@@ -139,7 +139,7 @@ function renderReagents(state){
 
 function renderReagentRackFromDatabase(rack){
   const occupied = rack.filter(x => x.bottle);
-  setText('reagentBadge', `${occupied.length} 个 DATABASE`);
+  setText('reagentBadge', `${occupied.length}/40 有效瓶`);
   const byPosition = new Map(rack.map(x => [x.position, x]));
   const deck = document.getElementById('reagentDeck');
   if(!deck) return;
@@ -150,8 +150,11 @@ function renderReagentRackFromDatabase(rack){
       const bottle = position?.bottle;
       const scanState = bottle ? 'VALID' : 'EMPTY';
       const volumeMl = bottle ? Math.round((bottle.remainingVolumeUl / 1000) * 10) / 10 : '';
-      const args = [pos, scanState, bottle?.fullBarcode || '', bottle?.name || '无瓶/未识别', bottle?.reagentCode || '', volumeMl, bottle?.lotNo || '', bottle?.expirationDate || ''].map(x => `'${String(x).replaceAll("'", "\\'")}'`).join(',');
-      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail(${args})"><b>${pos}</b><div><span>${escapeHtml(bottle ? bottle.name : scanState)}</span><small>${escapeHtml(bottle ? bottle.reagentCode : '数据库位置 ' + scanState)}</small></div><em>${bottle ? volumeMl + 'mL' : '--'}</em></button>`;
+      const title = bottle ? (bottle.name || bottle.reagentCode || scanState) : '空位';
+      const subtitle = bottle ? [bottle.reagentCode, bottle.lotNo].filter(Boolean).join(' / ') : '等待扫码';
+      const volume = bottle ? volumeMl + ' mL' : 'EMPTY';
+      const args = [pos, scanState, bottle?.fullBarcode || '', bottle?.name || '空位', bottle?.reagentCode || '', volumeMl, bottle?.lotNo || '', bottle?.expirationDate || ''].map(x => JSON.stringify(String(x))).join(',');
+      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail(${args})" title="${escapeHtml(pos + ' ' + title)}"><b>${pos}</b><div class="vial-main"><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div><em>${escapeHtml(volume)}</em></button>`;
     }).join('');
     return `<div class="reagent-rack"><header><b>ch${col}</b><span>R${(col-1)*8+1}-R${col*8}</span></header>${rows}</div>`;
   }).join('');
@@ -160,7 +163,7 @@ function renderReagentRackFromDatabase(rack){
   if(columnStatus){
     columnStatus.innerHTML = [1,2,3,4,5].map(col => {
       const count = rack.filter(x => x.columnNo === col && x.bottle).length;
-      return `<div><b>ch${col}</b><span>${count ? count + ' 个数据库瓶' : '数据库空位'}</span><em>R${(col-1)*8+1}-R${col*8}</em></div>`;
+      return `<div class="${count ? 'has-data' : 'empty'}"><b>ch${col}</b><span>${count}/8 VALID</span><em>R${(col-1)*8+1}-R${col*8}</em></div>`;
     }).join('');
   }
 }

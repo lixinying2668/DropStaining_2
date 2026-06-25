@@ -1,5 +1,6 @@
 namespace Stainer.Web.Infrastructure.Web;
 
+using Microsoft.Extensions.Hosting;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Application.Requests;
 
@@ -24,7 +25,11 @@ public static class WebHostEndpointExtensions
     {
         app.MapHub<MachineHub>(MachineHub.Route);
 
-        foreach (var route in PageRoutes)
+        var pageRoutes = app.Environment.IsProduction()
+            ? PageRoutes
+            : PageRoutes.Concat(["/mock-timeline"]);
+
+        foreach (var route in pageRoutes)
         {
             var capturedRoute = route;
             app.MapGet(capturedRoute, (LegacyUiPageRenderer renderer) => renderer.Render(capturedRoute));

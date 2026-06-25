@@ -76,3 +76,65 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .pump-state-strip span,.device-diagnostic-grid span{font-weight:900;color:#0c63bd}
 .device-diagnostic-grid{grid-template-columns:repeat(3,1fr);margin-bottom:12px}
 @media(max-width:1000px){.slot-temp-map,.pump-state-strip,.device-diagnostic-grid{grid-template-columns:1fr}}
+
+/* Mock timeline page, hidden from production routing */
+.mock-intro-card{border-color:#c7d2fe}
+.mock-summary-grid div{min-height:112px}
+.mock-timeline-layout{display:grid;grid-template-columns:minmax(320px,.78fr) minmax(0,1.42fr);gap:22px;align-items:start}
+.mock-event-list{display:grid;gap:10px;max-height:650px;overflow:auto;padding-right:4px}
+.mock-event{display:grid;grid-template-columns:74px minmax(0,1fr);gap:12px;align-items:start;padding:14px;border-radius:20px;background:#f8fbff;border:1px solid #dbe7f5}
+.mock-event time{height:42px;border-radius:15px;display:grid;place-items:center;background:#0e2644;color:#fff;font-weight:900}
+.mock-event div{display:grid;gap:4px}
+.mock-event span{font-size:12px;font-weight:900;color:#64748b}
+.mock-event b{font-size:17px;color:#10243d}
+.mock-event p{margin:0;color:#53657a;line-height:1.55}
+.mock-event.level-done{border-color:#bbf7d0;background:#f0fdf4}
+.mock-event.level-running{border-color:#bfdbfe;background:#eff6ff}
+.mock-event.level-warn{border-color:#fde68a;background:#fffbeb}
+.mock-event.level-fault{border-color:#fecdd3;background:#fff1f2}
+.mock-event.level-paused{border-color:#fed7aa;background:#fff7ed}
+.mock-event.level-dab{border-color:#99f6e4;background:#f0fdfa}
+.mock-gantt-card{overflow:hidden}
+.mock-gantt-shell{overflow:auto;padding-bottom:4px}
+.mock-gantt-scale,.mock-gantt-row{display:grid;grid-template-columns:150px minmax(760px,1fr)}
+.mock-gantt-scale{align-items:end;margin-bottom:8px;color:#64748b;font-size:12px;font-weight:900}
+.mock-gantt-scale>span{padding:0 12px 8px}
+.mock-gantt-scale>div{display:grid;grid-template-columns:repeat(6,1fr);gap:0;border-bottom:1px solid #dbe7f5}
+.mock-gantt-scale i{font-style:normal;padding:0 0 8px;text-align:left}
+.mock-gantt-row{min-height:74px;border-top:1px solid #eef2f7}
+.mock-gantt-lane{padding:12px;display:grid;gap:3px;align-content:center;background:#f8fbff;border-right:1px solid #dbe7f5}
+.mock-gantt-lane b{color:#0c63bd}
+.mock-gantt-lane span{font-size:12px;color:#64748b;line-height:1.35}
+.mock-gantt-track{position:relative;min-height:74px;background:repeating-linear-gradient(90deg,#fff 0,#fff calc(20% - 1px),#edf2f7 calc(20% - 1px),#edf2f7 20%)}
+.mock-gantt-bar{position:absolute;top:18px;height:38px;min-width:44px;border-radius:14px;display:flex;align-items:center;justify-content:center;padding:0 10px;color:#fff;font-weight:900;font-size:13px;box-shadow:0 12px 26px rgba(15,23,42,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mock-gantt-bar.status-done{background:#16a34a}
+.mock-gantt-bar.status-running{background:#2563eb}
+.mock-gantt-bar.status-warn{background:#d97706}
+.mock-gantt-bar.status-fault{background:#dc2626}
+.mock-gantt-bar.status-paused{background:#f97316}
+.mock-gantt-bar.status-pending{background:#64748b}
+.mock-gantt-bar.status-dab{background:#0f766e}
+@media(max-width:1200px){.mock-timeline-layout{grid-template-columns:1fr}.mock-event-list{max-height:none}}
+@media(max-width:1000px){.nav-stack{grid-template-columns:repeat(10,minmax(70px,1fr))}.mock-gantt-scale,.mock-gantt-row{grid-template-columns:130px minmax(680px,1fr)}}
+
+/* Reagent rack readability */
+.split-grid.wide-left.reagent-v18-layout{grid-template-columns:minmax(0,1fr) 360px}
+.v18-reagent-deck{grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.v18-reagent-deck .reagent-rack{padding:12px;border-radius:22px;overflow:hidden}
+.v18-reagent-deck .reagent-rack header{height:44px;border-radius:15px;margin-bottom:10px}
+.v18-reagent-deck .vial{height:56px;min-height:56px;grid-template-columns:34px minmax(0,1fr) 42px;gap:6px;padding:7px 8px;margin-bottom:8px;border-radius:14px;text-align:left}
+.v18-reagent-deck .vial b{font-size:14px}
+.v18-reagent-deck .vial-main{min-width:0;display:grid;gap:2px}
+.v18-reagent-deck .vial span{font-size:14px;line-height:1.1;max-width:100%}
+.v18-reagent-deck .vial small{display:block;font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#61738a}
+.v18-reagent-deck .vial em{font-size:11px;white-space:nowrap;font-weight:900;color:#475569}
+.v18-reagent-deck .vial.filled{background:#fff;border-color:#bbf7d0;box-shadow:inset 4px 0 0 #16a34a}
+.v18-reagent-deck .vial.empty{background:#f4f7fb;border-color:#d7e3f0;color:#8da0b8}
+.v18-reagent-deck .vial.empty span{color:#91a2b7;letter-spacing:.02em}
+.v18-reagent-deck .vial.empty small{color:#94a3b8}
+.v18-reagent-deck .vial.empty em{color:#94a3b8}
+.column-status-grid div.has-data{background:#f0fdf4;border-color:#bbf7d0}
+.column-status-grid div.has-data span{color:#047857;font-weight:900}
+.column-status-grid div.empty span{color:#64748b;font-weight:900}
+@media(max-width:1500px){.split-grid.wide-left.reagent-v18-layout{grid-template-columns:1fr}.v18-reagent-deck{grid-template-columns:repeat(5,minmax(150px,1fr))}}
+@media(max-width:1000px){.v18-reagent-deck{grid-template-columns:1fr}.split-grid.wide-left.reagent-v18-layout{grid-template-columns:1fr}}

@@ -1,9 +1,12 @@
 using System.Net;
+using Microsoft.Extensions.Hosting;
 
 namespace Stainer.Web.Infrastructure.Web;
 
-public sealed class LegacyUiPageRenderer
+public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
+    private const string AssetVersion = "20260625-r3";
+
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
         ["/dashboard"] = new("首页 / 运行总览", "首页 / 运行总览", "A-D 抽屉、16 Slot、初始化、试剂与运行状态总览。", DashboardContent(), "/static/js/dashboard.js"),
@@ -24,9 +27,21 @@ public sealed class LegacyUiPageRenderer
             return Html(LoginPage());
         }
 
-        if (!Pages.TryGetValue(path, out var page))
+        PageDefinition page;
+        if (!environment.IsProduction() && path.Equals("/mock-timeline", StringComparison.OrdinalIgnoreCase))
         {
-            page = Pages["/dashboard"];
+            page = new PageDefinition(
+                "Mock Timeline",
+                "Timeline / 甘特图 Mock",
+                "开发和测试专用页面，用于观察一次模拟运行的事件时间线、步骤跨度和资源占用；Production 环境隐藏。",
+                MockTimelineContent(),
+                "/static/js/mock-timeline.js");
+        }
+        else
+        {
+            page = Pages.TryGetValue(path, out var foundPage)
+                ? foundPage
+                : Pages["/dashboard"];
         }
 
         return Html(RenderShell(path, page));
@@ -37,12 +52,17 @@ public sealed class LegacyUiPageRenderer
         return Results.Content(html, "text/html; charset=utf-8");
     }
 
-    private static string RenderShell(string path, PageDefinition page)
+    private string RenderShell(string path, PageDefinition page)
     {
         var encodedTitle = WebUtility.HtmlEncode(page.Title);
         var encodedCrumb = WebUtility.HtmlEncode(page.Crumb);
         var encodedSubtitle = WebUtility.HtmlEncode(page.Subtitle);
-        var pageScript = string.IsNullOrWhiteSpace(page.ScriptPath) ? string.Empty : $"""<script src="{page.ScriptPath}"></script>""";
+        var pageScript = string.IsNullOrWhiteSpace(page.ScriptPath) ? string.Empty : $"""<script src="{VersionedAsset(page.ScriptPath)}"></script>""";
+        var mockNavigation = environment.IsProduction()
+            ? string.Empty
+            : """
+                <a href="/mock-timeline" class="nav-item admin-only" data-href="/mock-timeline"><i>T</i><span>Timeline</span><small>Mock</small></a>
+""";
         var inlineScript = path switch
         {
             "/engineer" => """<script>function safeMock(name){ if(confirm(name + ' is a dangerous mock action. Continue?')) toast('Mock: ' + name + ' recorded'); }</script>""",
@@ -57,7 +77,7 @@ public sealed class LegacyUiPageRenderer
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <meta name="theme-color" content="#07111f">
           <title>{{encodedTitle}} - 全自动冰冻切片染色机</title>
-          <link rel="stylesheet" href="/static/css/app.css">
+          <link rel="stylesheet" href="{{VersionedAsset("/static/css/app.css")}}">
         </head>
         <body data-status="idle">
           <div class="app-shell">
@@ -79,6 +99,7 @@ public sealed class LegacyUiPageRenderer
                 <a href="/configure" class="nav-item admin-only" data-href="/configure"><i>C</i><span>配置</span><small>协议</small></a>
                 <a href="/engineer" class="nav-item admin-only" data-href="/engineer"><i>E</i><span>工程</span><small>调试</small></a>
                 <a href="/admin" class="nav-item admin-only" data-href="/admin"><i>A</i><span>管理</span><small>用户</small></a>
+                {{mockNavigation}}
               </nav>
               <div class="operator-card">
                 <div class="avatar" id="operatorAvatar">访</div>
@@ -115,8 +136,8 @@ public sealed class LegacyUiPageRenderer
             </main>
           </div>
           <div id="toast" class="toast hidden"></div>
-          <script src="/static/js/api.js"></script>
-          <script src="/static/js/stainer-host.js"></script>
+          <script src="{{VersionedAsset("/static/js/api.js")}}"></script>
+          <script src="{{VersionedAsset("/static/js/stainer-host.js")}}"></script>
           {{pageScript}}
           {{inlineScript}}
         </body>
@@ -133,7 +154,7 @@ public sealed class LegacyUiPageRenderer
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <title>登录 - 全自动冰冻切片染色机</title>
-          <link rel="stylesheet" href="/static/css/app.css">
+          <link rel="stylesheet" href="/static/css/app.css?v=20260625-r3">
         </head>
         <body class="login-screen">
           <div class="login-grid">
@@ -173,7 +194,7 @@ public sealed class LegacyUiPageRenderer
             </section>
           </div>
           <div id="toast" class="toast hidden"></div>
-          <script src="/static/js/api.js"></script>
+          <script src="/static/js/api.js?v=20260625-r3"></script>
           <script>
             function selectedRole(){ return document.querySelector('input[name="role"]:checked').value; }
             function fillAccount(role){ username.value=role; password.value='123456'; document.querySelector(`input[value="${role}"]`).checked=true; syncRoles(); }
@@ -280,6 +301,49 @@ public sealed class LegacyUiPageRenderer
     private static string AdminContent()
     {
         return """<section class="kpi-grid admin-kpi"><article class="kpi-card"><span>用户账号</span><strong id="adminUserCount">0</strong><small>操作员 / 管理员；工程入口受控</small></article><article class="kpi-card"><span>试剂记录</span><strong id="adminReagentCount">0</strong><small>库存与条码审计</small></article><article class="kpi-card"><span>日志条数</span><strong id="adminLogCount">0</strong><small>动作与异常追溯</small></article><article class="kpi-card"><span>告警</span><strong id="adminAlarmCount">0</strong><small>未处理/历史告警</small></article></section><section class="split-grid"><article class="modern-card"><div class="section-title"><h2>用户管理</h2><div class="button-row"><button class="btn btn-primary">新增用户</button><button class="btn btn-soft">重置密码</button></div></div><div class="data-table user-table" id="userTable"></div></article><article class="modern-card"><div class="section-title"><h2>审计导出</h2><button class="btn btn-soft" onclick="location.href='/history'">打开历史与导出</button></div><div class="decision-list"><div><b>人工操作</b><span>登录、任务确认、流程选择、暂停、停止、故障重做。</span></div><div><b>配置操作</b><span>流程发布、坐标、液体类型、通信导入导出。</span></div><div><b>试剂/DAB</b><span>条码、来源瓶、用量、DAB 配制与清洗确认。</span></div></div></article></section><section class="modern-card"><div class="section-title"><h2>最近日志</h2><button class="btn btn-soft" onclick="toast('Mock: 日志导出成功')">导出审计</button></div><div class="timeline large" id="adminLogs"></div></section>""";
+    }
+
+    private static string MockTimelineContent()
+    {
+        return """
+        <section class="modern-card mock-intro-card">
+          <div class="section-title">
+            <div>
+              <h2>Mock 运行观察台</h2>
+              <p>用于内部验证 Mock 执行器、事件顺序、耗材占用和异常恢复。Production 环境不会显示该入口。</p>
+            </div>
+            <span class="badge-soft">测试专用</span>
+          </div>
+          <div class="validation-grid mock-summary-grid" id="mockRunSummary"></div>
+        </section>
+        <section class="mock-timeline-layout">
+          <article class="modern-card">
+            <div class="section-title">
+              <div>
+                <h2>Timeline</h2>
+                <p>按时间展示状态变化、步骤、告警、DAB 和试剂事件。</p>
+              </div>
+              <span class="badge-soft" id="mockEventCount">0 events</span>
+            </div>
+            <div class="mock-event-list" id="mockTimelineList"></div>
+          </article>
+          <article class="modern-card mock-gantt-card">
+            <div class="section-title">
+              <div>
+                <h2>甘特图</h2>
+                <p>按玻片任务展示大步骤跨度和暂停、故障、重做区间。</p>
+              </div>
+              <span class="badge-soft">08:00 - 09:40</span>
+            </div>
+            <div class="mock-gantt-shell" id="mockGanttBoard"></div>
+          </article>
+        </section>
+        """;
+    }
+
+    private static string VersionedAsset(string path)
+    {
+        return $"{path}?v={AssetVersion}";
     }
 
     private sealed record PageDefinition(string Crumb, string Title, string Subtitle, string Content, string? ScriptPath);

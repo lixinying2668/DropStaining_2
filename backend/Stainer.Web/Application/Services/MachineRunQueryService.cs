@@ -10,6 +10,7 @@ public sealed class MachineRunQueryService(StainerDbContext dbContext)
     {
         var run = await dbContext.MachineRuns
             .AsNoTracking()
+            .AsSplitQuery()
             .Include(x => x.ChannelBatches)
             .ThenInclude(x => x.SlideTasks)
             .Include(x => x.WorkflowExecutions)

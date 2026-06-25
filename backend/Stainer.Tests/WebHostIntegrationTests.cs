@@ -27,7 +27,7 @@ public sealed class WebHostIntegrationTests
         Assert.False(info!.PythonRuntimeRequired);
         Assert.Equal("ASP.NET Core", info.UiHost);
 
-        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/history", "/configure", "/engineer", "/admin" })
+        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/history", "/configure", "/engineer", "/admin", "/mock-timeline" })
         {
             var html = await client.GetStringAsync(route);
             Assert.Contains("app.css", html);
@@ -39,6 +39,10 @@ public sealed class WebHostIntegrationTests
         Assert.Contains("app-shell", dashboard);
         Assert.Contains("drawerBoard", dashboard);
 
+        var mockTimeline = await client.GetStringAsync("/mock-timeline");
+        Assert.Contains("mockGanttBoard", mockTimeline);
+        Assert.Contains("/static/js/mock-timeline.js", mockTimeline);
+
         var css = await client.GetAsync("/static/css/app.css");
         Assert.Equal(HttpStatusCode.OK, css.StatusCode);
         Assert.Contains("text/css", css.Content.Headers.ContentType?.MediaType);
@@ -48,6 +52,19 @@ public sealed class WebHostIntegrationTests
 
         var fallback = await client.GetStringAsync("/kiosk/unknown");
         Assert.Contains("drawerBoard", fallback);
+    }
+
+    [Fact]
+    public async Task Mock_timeline_page_is_hidden_in_production()
+    {
+        await using var factory = CreateFactory("Production");
+        using var client = factory.CreateClient();
+
+        var html = await client.GetStringAsync("/mock-timeline");
+
+        Assert.Contains("drawerBoard", html);
+        Assert.DoesNotContain("mockGanttBoard", html);
+        Assert.DoesNotContain("mock-timeline.js", html);
     }
 
     [Fact]
@@ -70,6 +87,103 @@ public sealed class WebHostIntegrationTests
         Assert.True(state!.Initialized);
         Assert.Equal("ready", state.Status);
         Assert.Equal(4, state.Channels.SelectMany(x => x.Slides).Count());
+    }
+
+    [Fact]
+    public async Task State_api_returns_current_run_snapshot_for_page_rendering()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        string slideTaskId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var drawer = await dbContext.Drawers.SingleAsync(x => x.Code == "A");
+            var slot = await dbContext.PhysicalSlots.SingleAsync(x => x.Code == "A-01");
+            var workflow = new WorkflowDefinition
+            {
+                Code = "STATE-HE",
+                Name = "State HE Workflow",
+                WorkflowType = StainingTaskType.He,
+                Description = "State API integration test"
+            };
+            var version = new WorkflowVersion
+            {
+                VersionNo = 810,
+                VersionLabel = "8.1",
+                Status = WorkflowVersionStatus.Published,
+                ChangeNote = "state-api-test",
+                PublishedAtUtc = DateTimeOffset.UtcNow
+            };
+            workflow.Versions.Add(version);
+
+            var task = new StainingTask
+            {
+                TaskCode = "STATE-TASK-001",
+                TaskType = StainingTaskType.He,
+                Status = StainingTaskStatus.Confirmed,
+                PhysicalSlot = slot,
+                WorkflowDefinition = workflow,
+                WorkflowVersion = version,
+                WorkflowSnapshotJson = "{}",
+                InputMode = "manual"
+            };
+            var run = new MachineRun
+            {
+                RunCode = "RUN-STATE-001",
+                Status = RuntimeLedgerStatus.Running,
+                CurrentMajorStepCode = "HEMATOXYLIN",
+                StartedAtUtc = DateTimeOffset.UtcNow
+            };
+            var batch = new ChannelBatch
+            {
+                MachineRun = run,
+                DrawerId = drawer.Id,
+                DrawerCode = "A",
+                Status = RuntimeLedgerStatus.Running
+            };
+            var slide = new SlideTask
+            {
+                ChannelBatch = batch,
+                StainingTask = task,
+                PhysicalSlot = slot,
+                SlotCode = "A-01",
+                TaskType = StainingTaskType.He,
+                Status = RuntimeLedgerStatus.Running
+            };
+            var execution = new WorkflowExecution
+            {
+                MachineRun = run,
+                SlideTask = slide,
+                WorkflowVersion = version,
+                Status = RuntimeLedgerStatus.Running
+            };
+            execution.StepExecutions.Add(new WorkflowStepExecution
+            {
+                StepNo = 1,
+                MajorStepCode = "HEMATOXYLIN",
+                StepName = "Hematoxylin",
+                ActionType = "Dispense",
+                ReagentCode = "HEM",
+                VolumeUl = 100,
+                Status = RuntimeLedgerStatus.Running
+            });
+            dbContext.MachineRuns.Add(run);
+            dbContext.StainingTasks.Add(task);
+            dbContext.ChannelBatches.Add(batch);
+            dbContext.SlideTasks.Add(slide);
+            dbContext.WorkflowExecutions.Add(execution);
+            await dbContext.SaveChangesAsync();
+            slideTaskId = slide.Id;
+        }
+
+        var state = await client.GetFromJsonAsync<RuntimeStateResponse>("/api/state");
+
+        Assert.NotNull(state);
+        Assert.Equal("running", state!.Status);
+        Assert.Equal(4, state.Channels.Length);
+        Assert.Contains(state.Channels.SelectMany(x => x.Slides), x => x.Id == slideTaskId);
     }
 
     [Fact]
@@ -205,13 +319,13 @@ public sealed class WebHostIntegrationTests
         Assert.Contains(roles!, x => x.Code == "admin");
     }
 
-    private static WebApplicationFactory<Program> CreateFactory()
+    private static WebApplicationFactory<Program> CreateFactory(string environment = "Testing")
     {
         var databasePath = Path.Combine(Path.GetTempPath(), "stainer-web-host-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
-                builder.UseEnvironment("Testing");
+                builder.UseEnvironment(environment);
                 builder.UseSetting("ConnectionStrings:StainerDatabase", $"Data Source={databasePath}");
                 builder.ConfigureAppConfiguration((_, config) =>
                 {
