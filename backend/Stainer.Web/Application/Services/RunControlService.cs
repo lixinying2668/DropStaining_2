@@ -10,7 +10,8 @@ namespace Stainer.Web.Application.Services;
 public sealed class RunControlService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
-    MachineExecutor executor)
+    MachineExecutor executor,
+    PreflightValidationService preflightValidationService)
 {
     public Task<RunCommandResponse> StartAsync(string runId, RunCommandRequest request, AuthenticatedUser actor, CancellationToken cancellationToken = default)
     {
@@ -22,6 +23,14 @@ public sealed class RunControlService(
             actor,
             async () =>
             {
+                var preflight = string.IsNullOrWhiteSpace(request.PreflightStateHash)
+                    ? null
+                    : await preflightValidationService.ValidateAsync(cancellationToken);
+                if (preflight is not null && (!preflight.Ok || !string.Equals(preflight.StateHash, request.PreflightStateHash, StringComparison.Ordinal)))
+                {
+                    throw new BusinessRuleException("preflight_invalid", "Latest preflight validation is missing, failed, or stale. Re-run preflight before starting.", StatusCodes.Status409Conflict);
+                }
+
                 await LockChannelBatchesForStartAsync(runId, request.CommandId, actor, cancellationToken);
                 await executor.EnqueueStartAsync(runId, cancellationToken);
             },

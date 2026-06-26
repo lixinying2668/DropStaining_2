@@ -2,9 +2,10 @@ namespace Stainer.Web.Application.Requests;
 
 public sealed record CreateMachineRunRequest(
     string CommandId,
-    IReadOnlyList<string> StainingTaskIds);
+    IReadOnlyList<string> StainingTaskIds,
+    string? PreflightStateHash = null);
 
-public sealed record RunCommandRequest(string CommandId);
+public sealed record RunCommandRequest(string CommandId, string? PreflightStateHash = null);
 
 public sealed record InjectFaultRequest(
     string CommandId,

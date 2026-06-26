@@ -70,6 +70,8 @@ public static class MachineEventTypes
     public const string WorkflowStepStarted = "workflowStep.started";
     public const string WorkflowStepCompleted = "workflowStep.completed";
     public const string TemperatureChanged = "temperature.changed";
+    public const string ReagentChanged = "reagent.changed";
+    public const string ReagentBottleChanged = "reagentBottle.changed";
     public const string ReagentBottleDepleted = "reagent.bottleDepleted";
     public const string DabBatchChanged = "dab.batchChanged";
     public const string AlarmRaised = "alarm.raised";

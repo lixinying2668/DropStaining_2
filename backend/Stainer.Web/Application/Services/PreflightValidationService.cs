@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Domain.Entities;
@@ -9,6 +12,7 @@ public sealed class PreflightValidationService(StainerDbContext dbContext)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
+        var generatedAtUtc = DateTimeOffset.UtcNow;
         var issues = new List<PreflightValidationIssueResponse>();
         var tasks = await dbContext.StainingTasks
             .AsNoTracking()
@@ -152,6 +156,24 @@ public sealed class PreflightValidationService(StainerDbContext dbContext)
             {
                 issues.Add(new PreflightValidationIssueResponse("Reagents", "scan_has_invalid_items", $"Latest reagent scan contains {invalidItems} invalid item(s)."));
             }
+
+            var positionCount = await dbContext.ReagentRackPositions
+                .AsNoTracking()
+                .CountAsync(cancellationToken);
+            var scannedPositionCount = await dbContext.ReagentScanItems
+                .AsNoTracking()
+                .Where(x => x.ReagentScanSessionId == latestScan.Id)
+                .Select(x => x.ReagentRackPositionId)
+                .Distinct()
+                .CountAsync(cancellationToken);
+            if (scannedPositionCount < positionCount)
+            {
+                issues.Add(new PreflightValidationIssueResponse(
+                    "Reagents",
+                    "scan_has_unscanned_positions",
+                    $"Latest reagent scan has {positionCount - scannedPositionCount} unscanned position(s).",
+                    "Warning"));
+            }
         }
 
         var requirements = await dbContext.WorkflowReagentRequirements
@@ -201,6 +223,99 @@ public sealed class PreflightValidationService(StainerDbContext dbContext)
             }
         }
 
-        return new PreflightValidationReportResponse(issues.Count == 0, tasks.Count, issues.Count, issues);
+        var failCount = issues.Count(x => !x.Severity.Equals("Warning", StringComparison.OrdinalIgnoreCase));
+        var warningCount = issues.Count - failCount;
+        var stateHash = await BuildStateHashAsync(cancellationToken);
+        return new PreflightValidationReportResponse(
+            failCount == 0,
+            tasks.Count,
+            failCount,
+            issues,
+            generatedAtUtc,
+            Guid.NewGuid().ToString("N"),
+            failCount == 0,
+            warningCount,
+            stateHash);
+    }
+
+    private async Task<string> BuildStateHashAsync(CancellationToken cancellationToken)
+    {
+        var tasks = await dbContext.StainingTasks
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.Status,
+                x.WorkflowVersionId,
+                x.UpdatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+        var batches = await dbContext.ChannelBatches
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.Status,
+                x.WorkflowSelectionStatus,
+                x.SelectedWorkflowVersionId,
+                x.WorkflowLockedAtUtc,
+                x.NeedsManualResolution
+            })
+            .ToListAsync(cancellationToken);
+        var scanSessions = await dbContext.ReagentScanSessions
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.Status,
+                x.StartedAtUtc,
+                x.CompletedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+        var scanItems = await dbContext.ReagentScanItems
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.ReagentScanSessionId,
+                x.ReagentRackPositionId,
+                x.ScanResult,
+                x.RawBarcode,
+                x.CreatedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+        var bottles = await dbContext.ReagentBottles
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.ReagentCode,
+                x.Status,
+                x.RemainingVolumeUl,
+                x.ExpirationDate,
+                x.UpdatedAtUtc,
+                x.LastScannedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+        var placements = await dbContext.ReagentRackPlacements
+            .AsNoTracking()
+            .OrderBy(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.ReagentBottleId,
+                x.ReagentRackPositionId,
+                x.ReagentScanSessionId,
+                x.RemovedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 }

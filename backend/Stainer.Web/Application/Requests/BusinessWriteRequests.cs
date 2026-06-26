@@ -72,7 +72,8 @@ public sealed record ReagentScanInputItem(
 
 public sealed record ConfirmReagentScanRequest(
     string CommandId,
-    IReadOnlyList<ReagentScanInputItem> Items);
+    IReadOnlyList<ReagentScanInputItem> Items,
+    string? ScanSessionId = null);
 
 public sealed record StartReagentScanSessionRequest(
     string CommandId);

@@ -103,7 +103,8 @@ public sealed class WebHostIntegrationTests
         Assert.Contains("/api/reagents/scan-sessions/overview", hostScript);
         Assert.Contains("/api/reagents/scan-sessions/start", hostScript);
         Assert.Contains("completeReagentScanSession", hostScript);
-        Assert.Contains("单个 R 位正式扫码确认尚未接入。", hostScript);
+        Assert.Contains("/api/reagents/scan-confirm", hostScript);
+        Assert.Contains("beginReagentScanGuide", hostScript);
         Assert.Contains("scanState", hostScript);
         Assert.Contains("reagent.bottleDepleted", hostScript);
         Assert.DoesNotContain("localStorage", hostScript);

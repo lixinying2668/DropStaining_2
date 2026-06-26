@@ -972,6 +972,124 @@ public sealed class BusinessWriteApiIntegrationTests
     }
 
     [Fact]
+    public async Task Active_reagent_scan_session_confirms_single_positions_rescans_and_publishes_events()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        await using (var seedScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            if (!await dbContext.ReagentDefinitions.AnyAsync(x => x.ReagentCode == "ABC"))
+            {
+                dbContext.ReagentDefinitions.Add(new ReagentDefinition
+                {
+                    ReagentCode = "ABC",
+                    Name = "ABC Test Reagent",
+                    ReagentType = "Primary",
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                });
+                await dbContext.SaveChangesAsync();
+            }
+        }
+
+        var started = await PostJsonAsync<ReagentScanSessionMutationResponse>(client, "/api/reagents/scan-sessions/start", new
+        {
+            commandId = "cmd-reagent-position-session-start"
+        });
+
+        var valid = await PostJsonAsync<ReagentScanConfirmationResponse>(client, "/api/reagents/scan-confirm", new
+        {
+            commandId = "cmd-reagent-position-r1-valid",
+            scanSessionId = started.Session.ScanSessionId,
+            items = new[]
+            {
+                new { position = "R1", scanResult = "VALID", rawBarcode = "ABC05020270101001", locatorCode = "R1", expirationDate = "2028-01-01" }
+            }
+        });
+        Assert.Equal("R1", valid.Position);
+        Assert.Equal(ReagentScanResult.Valid, valid.ScanResult);
+
+        var replayed = await PostJsonAsync<ReagentScanConfirmationResponse>(client, "/api/reagents/scan-confirm", new
+        {
+            commandId = "cmd-reagent-position-r1-valid",
+            scanSessionId = started.Session.ScanSessionId,
+            items = new[]
+            {
+                new { position = "R1", scanResult = "VALID", rawBarcode = "ABC05020270101001", locatorCode = "R1", expirationDate = "2028-01-01" }
+            }
+        });
+        Assert.True(replayed.Replayed);
+
+        var empty = await PostJsonAsync<ReagentScanConfirmationResponse>(client, "/api/reagents/scan-confirm", new
+        {
+            commandId = "cmd-reagent-position-r2-empty",
+            scanSessionId = started.Session.ScanSessionId,
+            items = new[]
+            {
+                new { position = "R2", scanResult = "EMPTY", rawBarcode = (string?)null, locatorCode = "R2", expirationDate = (string?)null }
+            }
+        });
+        Assert.Equal(ReagentScanResult.Empty, empty.ScanResult);
+
+        var invalid = await PostJsonAsync<ReagentScanConfirmationResponse>(client, "/api/reagents/scan-confirm", new
+        {
+            commandId = "cmd-reagent-position-r3-invalid",
+            scanSessionId = started.Session.ScanSessionId,
+            items = new[]
+            {
+                new { position = "R3", scanResult = "VALID", rawBarcode = "BAD", locatorCode = "R3", expirationDate = (string?)null }
+            }
+        });
+        Assert.Equal(ReagentScanResult.Invalid, invalid.ScanResult);
+        Assert.Contains("17 characters", invalid.ValidationMessage);
+
+        var rescan = await PostJsonAsync<ReagentScanConfirmationResponse>(client, "/api/reagents/scan-confirm", new
+        {
+            commandId = "cmd-reagent-position-r1-rescan-empty",
+            scanSessionId = started.Session.ScanSessionId,
+            items = new[]
+            {
+                new { position = "R1", scanResult = "EMPTY", rawBarcode = (string?)null, locatorCode = "R1", expirationDate = (string?)null }
+            }
+        });
+        Assert.Equal(ReagentScanResult.Empty, rescan.ScanResult);
+
+        var rack = await client.GetFromJsonAsync<List<ReagentRackPositionResponse>>("/api/reagents/rack");
+        Assert.Equal(ReagentScanResult.Empty, Assert.Single(rack!, x => x.Position == "R1").ScanState);
+        Assert.Equal(ReagentScanResult.Empty, Assert.Single(rack!, x => x.Position == "R2").ScanState);
+        Assert.Equal(ReagentScanResult.Invalid, Assert.Single(rack!, x => x.Position == "R3").ScanState);
+        Assert.Equal("UNSCANNED", Assert.Single(rack!, x => x.Position == "R4").ScanState);
+
+        _ = await PostJsonAsync<ReagentScanSessionMutationResponse>(
+            client,
+            $"/api/reagents/scan-sessions/{started.Session.ScanSessionId}/complete",
+            new { commandId = "cmd-reagent-position-session-complete" });
+
+        var afterComplete = await client.PostAsJsonAsync("/api/reagents/scan-confirm", new
+        {
+            commandId = "cmd-reagent-position-after-complete",
+            scanSessionId = started.Session.ScanSessionId,
+            items = new[]
+            {
+                new { position = "R4", scanResult = "EMPTY", rawBarcode = (string?)null, locatorCode = "R4", expirationDate = (string?)null }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Conflict, afterComplete.StatusCode);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        Assert.Equal(1, await verifyContext.ReagentBottles.CountAsync(x => x.FullBarcode == "ABC05020270101001"));
+        Assert.Equal(3, await verifyContext.ReagentScanItems.CountAsync(x => x.ReagentScanSessionId == started.Session.ScanSessionId));
+        Assert.False(await verifyContext.ReagentRackPlacements.AnyAsync(x => x.RemovedAtUtc == null && x.ReagentScanSessionId == started.Session.ScanSessionId));
+        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "reagent.scan_rescan" && x.EntityId == started.Session.ScanSessionId));
+
+        var publisher = factory.Services.GetRequiredService<InMemoryRuntimeEventPublisher>();
+        Assert.Contains(publisher.Snapshot(), x => x.Type == MachineEventTypes.ReagentChanged && x.Payload["position"]?.ToString() == "R1");
+    }
+
+    [Fact]
     public async Task Reagent_scan_engineering_writes_preflight_and_transaction_rollback_are_covered()
     {
         await using var factory = CreateFactory();

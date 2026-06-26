@@ -8,7 +8,10 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class MachineRunService(StainerDbContext dbContext, CommandIdempotencyService idempotencyService)
+public sealed class MachineRunService(
+    StainerDbContext dbContext,
+    CommandIdempotencyService idempotencyService,
+    PreflightValidationService preflightValidationService)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -27,6 +30,14 @@ public sealed class MachineRunService(StainerDbContext dbContext, CommandIdempot
                 if (request.StainingTaskIds.Count == 0)
                 {
                     throw new BusinessRuleException("tasks_required", "At least one confirmed task is required.");
+                }
+
+                var preflight = string.IsNullOrWhiteSpace(request.PreflightStateHash)
+                    ? null
+                    : await preflightValidationService.ValidateAsync(cancellationToken);
+                if (preflight is not null && (!preflight.Ok || !string.Equals(preflight.StateHash, request.PreflightStateHash, StringComparison.Ordinal)))
+                {
+                    throw new BusinessRuleException("preflight_invalid", "Latest preflight validation is missing, failed, or stale. Re-run preflight before creating a run.", StatusCodes.Status409Conflict);
                 }
 
                 var activeRun = await dbContext.MachineRuns.AnyAsync(

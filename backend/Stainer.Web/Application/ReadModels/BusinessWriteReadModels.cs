@@ -85,7 +85,10 @@ public sealed record ReagentScanConfirmationResponse(
     int EmptyCount,
     int ValidCount,
     int InvalidCount,
-    string Message);
+    string Message,
+    string? Position = null,
+    string? ScanResult = null,
+    string? ValidationMessage = null);
 
 public sealed record ReagentScanSessionMutationResponse(
     bool Ok,
@@ -105,9 +108,15 @@ public sealed record PreflightValidationReportResponse(
     bool Ok,
     int TaskCount,
     int IssueCount,
-    IReadOnlyList<PreflightValidationIssueResponse> Issues);
+    IReadOnlyList<PreflightValidationIssueResponse> Issues,
+    DateTimeOffset? GeneratedAtUtc = null,
+    string? ReportId = null,
+    bool CanStart = false,
+    int WarningCount = 0,
+    string? StateHash = null);
 
 public sealed record PreflightValidationIssueResponse(
     string Area,
     string Code,
-    string Message);
+    string Message,
+    string Severity = "Fail");

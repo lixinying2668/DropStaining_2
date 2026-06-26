@@ -14,6 +14,8 @@ function setText(id, value){
 window.machineStateSnapshot = null;
 window.sampleWorkflowOptions = null;
 window.reagentScanSessionOverview = null;
+window.reagentScanGuide = null;
+let activeReagentScanPosition = null;
 let activeChannelScriptLetter = null;
 let activeConfirmMode = null;
 let pendingPrimaryAntibodyCandidates = [];
@@ -161,7 +163,7 @@ function renderReagentScanSessionOverview(overview){
   if(startBtn) startBtn.disabled = !!active;
   if(completeBtn) completeBtn.disabled = !active;
   if(!session){
-    root.innerHTML = '扫码会话：未开始 · 已扫描：0 / 40 · 有效：0 · 无效：0 · 空位：0 · 未扫描：40';
+    root.innerHTML = '扫码会话：未开始 · 已扫描：0 / 40 · 有效：0 · 无效：0 · 空位：0 · 未扫描：40' + reagentGuideSummaryText();
     return;
   }
 
@@ -176,7 +178,16 @@ function renderReagentScanSessionOverview(overview){
     `无效：${Number(session.invalidCount || 0)}`,
     `空位：${Number(session.emptyCount || 0)}`,
     `未扫描：${Number(session.unscannedCount || 0)}`
-  ].join(' · ') + warning;
+  ].join(' · ') + warning + reagentGuideSummaryText();
+}
+
+function reagentGuideSummaryText(){
+  const guide = window.reagentScanGuide;
+  if(!guide || !guide.positions?.length || guide.cancelled) return '';
+  const index = Math.min(Number(guide.index || 0), guide.positions.length - 1);
+  const pos = guide.positions[index];
+  const current = rackPositionByCode(pos);
+  return ` · 当前引导：${escapeHtml(guide.label || '扫码引导')}，第 ${index + 1} / ${guide.positions.length} 位，${escapeHtml(pos)}${current ? ` · ${escapeHtml(scanStateLabel(scanStateOf(current)))}` : ''}`;
 }
 
 function renderReagentRackFromDatabase(rack){
@@ -234,6 +245,14 @@ function invalidOrScanMessage(position){
   if(state === 'EMPTY') return position?.validationMessage || '空位';
   if(state === 'UNSCANNED') return '未扫码';
   return position?.validationMessage || 'OK';
+}
+
+function rackPositionByCode(pos){
+  return (window.reagentRackSnapshot || []).find(x => String(x.position || '').toUpperCase() === String(pos || '').toUpperCase());
+}
+
+function activeReagentScanSession(){
+  return window.reagentScanSessionOverview?.activeSession || null;
 }
 
 function formatVolume(volumeUl){
@@ -353,6 +372,10 @@ function applyMachineEvent(event){
   if(!state || !event) return;
   const payload = event.payload || {};
   appendMachineLog(state, event);
+  if(typeof window.invalidatePreflightView === 'function'
+      && ['scanSession.changed','reagent.changed','reagentBottle.changed','channelBatch.changed','slideTask.created','machine.stateChanged','workflowStep.started','workflowStep.completed','alarm.raised','alarm.acknowledged','device.connectionChanged','qr.scanCompleted'].includes(event.type)){
+    window.invalidatePreflightView('后端状态已变化。');
+  }
   if(isReagentEvent(event)){
     refreshReagentRack();
     refreshReagentScanSession();
@@ -361,6 +384,7 @@ function applyMachineEvent(event){
     case 'channelBatch.changed':
     case 'slideTask.created':
       loadHostState();
+      if(typeof window.refreshRunView === 'function') window.refreshRunView();
       return;
     case 'machine.stateChanged':
       state.runId = payload.runId || event.runId || state.runId;
@@ -404,6 +428,10 @@ function applyMachineEvent(event){
   renderHistory(state);
   renderEngineer(state);
   renderRunPage(state);
+  if(typeof window.refreshRunView === 'function'
+      && ['machine.stateChanged','workflowStep.started','workflowStep.completed','alarm.raised','alarm.acknowledged','device.connectionChanged'].includes(event.type)){
+    window.refreshRunView();
+  }
 }
 
 function isReagentEvent(event){
@@ -493,21 +521,161 @@ async function completeReagentScanSession(){
 }
 
 async function scanReagents(){
-  toast('单个 R 位正式扫码确认尚未接入。', true);
+  await beginReagentScanGuide('全部试剂架', Array.from({length: 40}, (_, index) => 'R' + (index + 1)));
 }
 
 function mockColumnScan(col){
-  toast('单个 R 位正式扫码确认尚未接入。', true);
+  const start = ((Number(col) || 1) - 1) * 8 + 1;
+  const positions = Array.from({length: 8}, (_, index) => 'R' + (start + index));
+  beginReagentScanGuide('ch' + col, positions);
+}
+
+async function beginReagentScanGuide(label, positions){
+  await refreshReagentScanSession();
+  if(!activeReagentScanSession()){
+    toast('请先点击【开始扫码】创建正式扫码会话。', true);
+    return;
+  }
+  window.reagentScanGuide = {label, positions, index: 0, cancelled: false};
+  renderReagentScanSessionOverview(window.reagentScanSessionOverview || {});
+  openReagentScanModal(positions[0], true);
 }
 
 function showReagentDetail(pos){
+  if(activeReagentScanSession()){
+    openReagentScanModal(pos, false);
+    return;
+  }
   const body = document.getElementById('reagentDetailBody');
   if(!body) return;
-  const position = (window.reagentRackSnapshot || []).find(x => x.position === pos);
+  const position = rackPositionByCode(pos);
   const bottle = position?.bottle;
   const state = scanStateOf(position);
   body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>SCAN_STATE</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || '--')}</small></div><div><span>完整条码</span><b>${escapeHtml(bottle?.fullBarcode || position?.rawBarcode || '--')}</b><small>${escapeHtml(bottle?.barcodeSummary || position?.barcodeSummary || '--')}</small></div><div><span>试剂名称</span><b>${escapeHtml(bottle?.name || scanStateTitle(state))}</b></div><div><span>试剂代码</span><b>${escapeHtml(bottle?.reagentCode || position?.parsedReagentCode || '--')}</b></div><div><span>剩余量</span><b>${escapeHtml(bottle ? formatVolume(bottle.remainingVolumeUl) : '--')}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle?.lotNo, bottle?.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle?.expirationDate))}</b></div><div><span>最后扫码时间</span><b>${escapeHtml(formatDateTime(position?.lastScannedAtUtc || bottle?.lastScannedAtUtc))}</b></div><div><span>扫码会话</span><b>${escapeHtml(position?.lastScanSessionCode || '--')}</b><small>${escapeHtml(position?.lastScanSessionStatus || '--')}</small></div>`;
   document.getElementById('reagentDetail')?.classList.remove('hidden');
+}
+
+function openReagentScanModal(pos, fromGuide=false){
+  const active = activeReagentScanSession();
+  if(!active?.scanSessionId){
+    toast('请先点击【开始扫码】创建正式扫码会话。', true);
+    return;
+  }
+  activeReagentScanPosition = pos;
+  const position = rackPositionByCode(pos);
+  const state = scanStateOf(position);
+  const bottle = position?.bottle;
+  setText('reagentScanTitle', `${pos} 扫码确认`);
+  const context = document.getElementById('reagentScanContext');
+  if(context){
+    context.innerHTML = [
+      `<div><span>当前扫码会话</span><b>${escapeHtml(active.sessionCode || active.scanSessionId)}</b><small>${escapeHtml(formatDateTime(active.startedAtUtc))}</small></div>`,
+      `<div><span>当前位置</span><b>${escapeHtml(pos)}</b></div>`,
+      `<div><span>所属扫描通道</span><b>${escapeHtml(position?.scannerChannelCode || ('ch' + (position?.scannerChannelNo || '--')))}</b></div>`,
+      `<div><span>当前结果</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || invalidOrScanMessage(position))}</small></div>`
+    ].join('');
+  }
+  const result = document.getElementById('reagentScanResult');
+  if(result){
+    result.innerHTML = bottle
+      ? `<div><span>试剂代码</span><b>${escapeHtml(bottle.reagentCode)}</b></div><div><span>试剂名称</span><b>${escapeHtml(bottle.name || '--')}</b></div><div><span>余量</span><b>${escapeHtml(formatVolume(bottle.remainingVolumeUl))}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle.lotNo, bottle.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle.expirationDate))}</b></div>`
+      : `<div><span>后端结果</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || '等待确认')}</small></div>`;
+  }
+  const mode = document.getElementById('reagentScanMode');
+  const barcode = document.getElementById('reagentBarcodeInput');
+  const expiration = document.getElementById('reagentExpirationInput');
+  if(mode) mode.value = 'barcode';
+  if(barcode) barcode.value = '';
+  if(expiration) expiration.value = '';
+  setText('reagentScanHint', state === 'UNSCANNED'
+    ? '前端只提交原始文本，条码解析和校验由后端完成。'
+    : '重新扫码将以本次确认结果为准；后端会在事务内更新瓶位关系。');
+  syncReagentScanMode();
+  document.getElementById('reagentScanModal')?.classList.remove('hidden');
+}
+
+function syncReagentScanMode(){
+  const mode = document.getElementById('reagentScanMode')?.value || 'barcode';
+  document.getElementById('reagentBarcodeLabel')?.classList.toggle('hidden', mode === 'empty');
+  document.getElementById('reagentExpirationLabel')?.classList.toggle('hidden', mode === 'empty');
+  setText('reagentScanHint', mode === 'empty'
+    ? `确认将 ${activeReagentScanPosition || ''} 标记为空位；后端不会创建试剂瓶。`
+    : '前端只提交原始文本，条码解析和校验由后端完成。');
+}
+
+function cancelReagentScanModal(){
+  document.getElementById('reagentScanModal')?.classList.add('hidden');
+  const guide = window.reagentScanGuide;
+  if(guide && guide.positions?.[guide.index] === activeReagentScanPosition){
+    guide.cancelled = true;
+    renderReagentScanSessionOverview(window.reagentScanSessionOverview || {});
+    toast('扫码引导已取消；已确认的 R 位保留，未扫描位置保持未扫描。');
+  }
+  activeReagentScanPosition = null;
+}
+
+async function confirmReagentPositionScan(){
+  const active = activeReagentScanSession();
+  const pos = activeReagentScanPosition;
+  if(!active?.scanSessionId || !pos){
+    toast('当前没有进行中的扫码会话或目标 R 位。', true);
+    return;
+  }
+  const mode = document.getElementById('reagentScanMode')?.value || 'barcode';
+  const rawBarcode = document.getElementById('reagentBarcodeInput')?.value?.trim() || '';
+  const expirationDate = document.getElementById('reagentExpirationInput')?.value || null;
+  if(mode === 'empty' && !confirm(`确认将 ${pos} 标记为空位？`)) return;
+  if(mode !== 'empty' && !rawBarcode){
+    toast('请输入 Mock 条码原始文本，或选择空位确认。', true);
+    return;
+  }
+  try{
+    const response = await api('/api/reagents/scan-confirm', {
+      method:'POST',
+      body: JSON.stringify({
+        commandId: commandId('reagent-scan-confirm'),
+        scanSessionId: active.scanSessionId,
+        items: [{
+          position: pos,
+          scanResult: mode === 'empty' ? 'EMPTY' : 'VALID',
+          rawBarcode: mode === 'empty' ? null : rawBarcode,
+          locatorCode: pos,
+          expirationDate
+        }]
+      })
+    });
+    await Promise.all([refreshReagentRack(), refreshReagentScanSession()]);
+    const refreshed = rackPositionByCode(pos);
+    renderReagentPositionResult(refreshed, response);
+    toast(response.message || 'R 位扫码确认已保存');
+    advanceReagentScanGuide(pos);
+  }catch(e){
+    setText('reagentScanHint', e.message || '扫码确认失败');
+  }
+}
+
+function renderReagentPositionResult(position, response){
+  const result = document.getElementById('reagentScanResult');
+  if(!result) return;
+  const bottle = position?.bottle;
+  const state = scanStateOf(position);
+  result.innerHTML = bottle
+    ? `<div><span>后端状态</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || response?.validationMessage || '--')}</small></div><div><span>试剂代码</span><b>${escapeHtml(bottle.reagentCode)}</b></div><div><span>试剂名称</span><b>${escapeHtml(bottle.name || '--')}</b></div><div><span>余量</span><b>${escapeHtml(formatVolume(bottle.remainingVolumeUl))}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle.lotNo, bottle.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle.expirationDate))}</b></div>`
+    : `<div><span>后端状态</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || response?.validationMessage || '--')}</small></div>`;
+}
+
+function advanceReagentScanGuide(pos){
+  const guide = window.reagentScanGuide;
+  if(!guide || guide.cancelled || guide.positions?.[guide.index] !== pos) return;
+  guide.index += 1;
+  if(guide.index >= guide.positions.length){
+    window.reagentScanGuide = null;
+    renderReagentScanSessionOverview(window.reagentScanSessionOverview || {});
+    toast('扫码引导已完成。');
+    return;
+  }
+  renderReagentScanSessionOverview(window.reagentScanSessionOverview || {});
+  setTimeout(() => openReagentScanModal(guide.positions[guide.index], true), 250);
 }
 
 function commandId(prefix){
