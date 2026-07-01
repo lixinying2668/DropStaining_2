@@ -119,8 +119,8 @@ public sealed record HistoryReagentConsumptionResponse(
 public sealed record HistoryDabUsageResponse(
     string DabBatchUsageId,
     string DabBatchId,
-    string MachineRunId,
-    string WorkflowStepExecutionId,
+    string? MachineRunId,
+    string? WorkflowStepExecutionId,
     string PositionCode,
     int VolumeUl,
     DateTimeOffset CreatedAtUtc,

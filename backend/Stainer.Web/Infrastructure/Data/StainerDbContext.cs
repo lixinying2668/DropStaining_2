@@ -54,6 +54,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<ReagentConsumption> ReagentConsumptions => Set<ReagentConsumption>();
     public DbSet<DispenseExecution> DispenseExecutions => Set<DispenseExecution>();
     public DbSet<DabBatch> DabBatches => Set<DabBatch>();
+    public DbSet<DabBatchTask> DabBatchTasks => Set<DabBatchTask>();
     public DbSet<DabBatchUsage> DabBatchUsages => Set<DabBatchUsage>();
     public DbSet<Alarm> Alarms => Set<Alarm>();
     public DbSet<AlarmAction> AlarmActions => Set<AlarmAction>();
@@ -479,9 +480,13 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Code).HasColumnName("code").HasMaxLength(8).IsRequired();
         entity.Property(x => x.PositionNo).HasColumnName("position_no").IsRequired();
         entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).HasDefaultValue(DabMixPositionStatus.Available).IsRequired();
+        entity.Property(x => x.ActiveDabBatchId).HasColumnName("active_dab_batch_id").HasMaxLength(36);
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         entity.HasIndex(x => x.Code).IsUnique();
         entity.HasIndex(x => x.PositionNo).IsUnique();
+        entity.HasIndex(x => x.ActiveDabBatchId).IsUnique();
     }
 
     private static void ConfigureWashPosition(ModelBuilder modelBuilder)
@@ -1206,13 +1211,27 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         reservations.ToTable("reagent_reservations");
         reservations.HasKey(x => x.Id);
         reservations.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
-        reservations.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36).IsRequired();
+        reservations.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        reservations.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36);
+        reservations.Property(x => x.ReagentBottleId).HasColumnName("reagent_bottle_id").HasMaxLength(36);
         reservations.Property(x => x.ReagentCode).HasColumnName("reagent_code").HasMaxLength(64).IsRequired();
+        reservations.Property(x => x.ReservationKind).HasColumnName("reservation_kind").HasMaxLength(32).HasDefaultValue(ReagentReservationKind.MachineRun).IsRequired();
+        reservations.Property(x => x.SourceRole).HasColumnName("source_role").HasMaxLength(32).HasDefaultValue(string.Empty).IsRequired();
+        reservations.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).HasDefaultValue(ReagentReservationStatus.Reserved).IsRequired();
+        reservations.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128);
+        reservations.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
         reservations.Property(x => x.RequiredVolumeUl).HasColumnName("required_volume_ul").IsRequired();
         reservations.Property(x => x.ReservedVolumeUl).HasColumnName("reserved_volume_ul").IsRequired();
         reservations.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        reservations.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         reservations.HasIndex(x => new { x.MachineRunId, x.ReagentCode });
+        reservations.HasIndex(x => new { x.DabBatchId, x.SourceRole, x.Status });
+        reservations.HasIndex(x => new { x.ReagentBottleId, x.Status });
+        reservations.HasIndex(x => x.CommandId);
         reservations.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
+        reservations.HasOne(x => x.DabBatch).WithMany(x => x.ReagentReservations).HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.Cascade);
+        reservations.HasOne(x => x.ReagentBottle).WithMany().HasForeignKey(x => x.ReagentBottleId).OnDelete(DeleteBehavior.Restrict);
+        reservations.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
 
         var consumptions = modelBuilder.Entity<ReagentConsumption>();
         consumptions.ToTable("reagent_consumptions");
@@ -1249,26 +1268,67 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         dabBatches.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         dabBatches.Property(x => x.DabMixPositionId).HasColumnName("dab_mix_position_id").HasMaxLength(36).IsRequired();
         dabBatches.Property(x => x.PositionCode).HasColumnName("position_code").HasMaxLength(16).IsRequired();
+        dabBatches.Property(x => x.DabAReagentBottleId).HasColumnName("dab_a_reagent_bottle_id").HasMaxLength(36);
+        dabBatches.Property(x => x.DabBReagentBottleId).HasColumnName("dab_b_reagent_bottle_id").HasMaxLength(36);
+        dabBatches.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
         dabBatches.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        dabBatches.Property(x => x.CleaningStatus).HasColumnName("cleaning_status").HasMaxLength(32).HasDefaultValue(DabCleaningStatus.NotRequired).IsRequired();
+        dabBatches.Property(x => x.SlideCount).HasColumnName("slide_count").IsRequired();
+        dabBatches.Property(x => x.VolumePerSlideUl).HasColumnName("volume_per_slide_ul").HasDefaultValue(DabFormula.VolumePerSlideUl).IsRequired();
+        dabBatches.Property(x => x.LineReserveVolumeUl).HasColumnName("line_reserve_volume_ul").HasDefaultValue(DabFormula.LineReserveVolumeUl).IsRequired();
+        dabBatches.Property(x => x.DabARatioParts).HasColumnName("dab_a_ratio_parts").HasDefaultValue(DabFormula.DabARatioParts).IsRequired();
+        dabBatches.Property(x => x.DabBRatioParts).HasColumnName("dab_b_ratio_parts").HasDefaultValue(DabFormula.DabBRatioParts).IsRequired();
+        dabBatches.Property(x => x.WaterRatioParts).HasColumnName("water_ratio_parts").HasDefaultValue(DabFormula.WaterRatioParts).IsRequired();
+        dabBatches.Property(x => x.TotalRequiredVolumeUl).HasColumnName("total_required_volume_ul").IsRequired();
+        dabBatches.Property(x => x.ActualPreparedVolumeUl).HasColumnName("actual_prepared_volume_ul").IsRequired();
+        dabBatches.Property(x => x.DabAVolumeUl).HasColumnName("dab_a_volume_ul").IsRequired();
+        dabBatches.Property(x => x.DabBVolumeUl).HasColumnName("dab_b_volume_ul").IsRequired();
+        dabBatches.Property(x => x.WaterVolumeUl).HasColumnName("water_volume_ul").IsRequired();
+        dabBatches.Property(x => x.UsedVolumeUl).HasColumnName("used_volume_ul").IsRequired();
         dabBatches.Property(x => x.RemainingVolumeUl).HasColumnName("remaining_volume_ul").IsRequired();
-        dabBatches.Property(x => x.PreparedAtUtc).HasColumnName("prepared_at_utc").IsRequired();
-        dabBatches.Property(x => x.ExpiresAtUtc).HasColumnName("expires_at_utc").IsRequired();
+        dabBatches.Property(x => x.PreparedAtUtc).HasColumnName("prepared_at_utc");
+        dabBatches.Property(x => x.ExpiresAtUtc).HasColumnName("expires_at_utc");
+        dabBatches.Property(x => x.CleaningConfirmedAtUtc).HasColumnName("cleaning_confirmed_at_utc");
         dabBatches.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        dabBatches.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         dabBatches.HasIndex(x => new { x.PositionCode, x.Status });
+        dabBatches.HasIndex(x => x.DabMixPositionId);
         dabBatches.HasOne(x => x.DabMixPosition).WithMany().HasForeignKey(x => x.DabMixPositionId).OnDelete(DeleteBehavior.Restrict);
+        dabBatches.HasOne(x => x.DabAReagentBottle).WithMany().HasForeignKey(x => x.DabAReagentBottleId).OnDelete(DeleteBehavior.Restrict);
+        dabBatches.HasOne(x => x.DabBReagentBottle).WithMany().HasForeignKey(x => x.DabBReagentBottleId).OnDelete(DeleteBehavior.Restrict);
+        dabBatches.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        var dabTasks = modelBuilder.Entity<DabBatchTask>();
+        dabTasks.ToTable("dab_batch_tasks");
+        dabTasks.HasKey(x => x.Id);
+        dabTasks.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        dabTasks.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36).IsRequired();
+        dabTasks.Property(x => x.StainingTaskId).HasColumnName("staining_task_id").HasMaxLength(36).IsRequired();
+        dabTasks.Property(x => x.RequiredVolumeUl).HasColumnName("required_volume_ul").IsRequired();
+        dabTasks.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        dabTasks.HasIndex(x => new { x.DabBatchId, x.StainingTaskId }).IsUnique();
+        dabTasks.HasIndex(x => x.StainingTaskId);
+        dabTasks.HasOne(x => x.DabBatch).WithMany(x => x.Tasks).HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.Cascade);
+        dabTasks.HasOne(x => x.StainingTask).WithMany().HasForeignKey(x => x.StainingTaskId).OnDelete(DeleteBehavior.Restrict);
 
         var dabUsages = modelBuilder.Entity<DabBatchUsage>();
         dabUsages.ToTable("dab_batch_usages");
         dabUsages.HasKey(x => x.Id);
         dabUsages.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         dabUsages.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36).IsRequired();
-        dabUsages.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36).IsRequired();
-        dabUsages.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36).IsRequired();
+        dabUsages.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        dabUsages.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        dabUsages.Property(x => x.StainingTaskId).HasColumnName("staining_task_id").HasMaxLength(36);
+        dabUsages.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128);
+        dabUsages.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
         dabUsages.Property(x => x.VolumeUl).HasColumnName("volume_ul").IsRequired();
         dabUsages.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
-        dabUsages.HasOne(x => x.DabBatch).WithMany().HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.Cascade);
+        dabUsages.HasIndex(x => x.CommandId).IsUnique();
+        dabUsages.HasOne(x => x.DabBatch).WithMany(x => x.Usages).HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.Cascade);
         dabUsages.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
         dabUsages.HasOne(x => x.WorkflowStepExecution).WithMany().HasForeignKey(x => x.WorkflowStepExecutionId).OnDelete(DeleteBehavior.Cascade);
+        dabUsages.HasOne(x => x.StainingTask).WithMany().HasForeignKey(x => x.StainingTaskId).OnDelete(DeleteBehavior.Restrict);
+        dabUsages.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
     }
 
     private static void ConfigureRuntimeAlarms(ModelBuilder modelBuilder)

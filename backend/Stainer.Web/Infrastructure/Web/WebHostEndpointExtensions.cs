@@ -322,6 +322,66 @@ public static class WebHostEndpointExtensions
         app.MapGet("/api/engineering/liquid-classes", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListLiquidClassesAsync(cancellationToken)));
         app.MapGet("/api/dab", (MockRuntimeStore store, int? slideCount) => Results.Ok(store.GetDab(slideCount)));
+        app.MapGet("/api/dab/positions", async (HttpContext context, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListPositionsAsync(cancellationToken));
+            }));
+        app.MapGet("/api/dab/batches/{batchId}", async (HttpContext context, string batchId, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetBatchAsync(batchId, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches", async (HttpContext context, CreateDabBatchRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.CreateBatchAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/preparation/start", async (HttpContext context, string batchId, DabBatchCommandRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.StartPreparationAsync(batchId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/preparation/complete", async (HttpContext context, string batchId, CompleteDabPreparationRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.CompletePreparationAsync(batchId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/consume", async (HttpContext context, string batchId, ConsumeDabBatchRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ConsumeAsync(batchId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/expire", async (HttpContext context, string batchId, DabBatchCommandRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.MarkExpiredAsync(batchId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/fail", async (HttpContext context, string batchId, FailDabBatchRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.FailAsync(batchId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/cleaning/start", async (HttpContext context, string batchId, DabBatchCommandRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.StartCleaningAsync(batchId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/dab/batches/{batchId}/cleaning/confirm", async (HttpContext context, string batchId, DabBatchCommandRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ConfirmCleaningAsync(batchId, request, actor, cancellationToken));
+            }));
         app.MapGet("/api/logs", (MockRuntimeStore store) =>
         {
             var state = store.GetState();

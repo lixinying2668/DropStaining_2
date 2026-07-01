@@ -144,13 +144,24 @@ public sealed class DeviceCommandExecution
 public sealed class ReagentReservation
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string MachineRunId { get; set; } = string.Empty;
+    public string? MachineRunId { get; set; }
+    public string? DabBatchId { get; set; }
+    public string? ReagentBottleId { get; set; }
     public string ReagentCode { get; set; } = string.Empty;
+    public string ReservationKind { get; set; } = ReagentReservationKind.MachineRun;
+    public string SourceRole { get; set; } = string.Empty;
+    public string Status { get; set; } = ReagentReservationStatus.Reserved;
+    public string? CommandId { get; set; }
+    public string? CreatedByUserId { get; set; }
     public int RequiredVolumeUl { get; set; }
     public int ReservedVolumeUl { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? UpdatedAtUtc { get; set; }
 
     public MachineRun? MachineRun { get; set; }
+    public DabBatch? DabBatch { get; set; }
+    public ReagentBottle? ReagentBottle { get; set; }
+    public User? CreatedByUser { get; set; }
 }
 
 public sealed class ReagentConsumption
@@ -189,28 +200,143 @@ public sealed class DabBatch
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string DabMixPositionId { get; set; } = string.Empty;
     public string PositionCode { get; set; } = string.Empty;
-    public string Status { get; set; } = RuntimeLedgerStatus.Available;
+    public string? DabAReagentBottleId { get; set; }
+    public string? DabBReagentBottleId { get; set; }
+    public string? CreatedByUserId { get; set; }
+    public string Status { get; set; } = DabBatchStatus.PendingPreparation;
+    public string CleaningStatus { get; set; } = DabCleaningStatus.NotRequired;
+    public int SlideCount { get; set; }
+    public int VolumePerSlideUl { get; set; } = DabFormula.VolumePerSlideUl;
+    public int LineReserveVolumeUl { get; set; } = DabFormula.LineReserveVolumeUl;
+    public int DabARatioParts { get; set; } = DabFormula.DabARatioParts;
+    public int DabBRatioParts { get; set; } = DabFormula.DabBRatioParts;
+    public int WaterRatioParts { get; set; } = DabFormula.WaterRatioParts;
+    public int TotalRequiredVolumeUl { get; set; }
+    public int ActualPreparedVolumeUl { get; set; }
+    public int DabAVolumeUl { get; set; }
+    public int DabBVolumeUl { get; set; }
+    public int WaterVolumeUl { get; set; }
+    public int UsedVolumeUl { get; set; }
     public int RemainingVolumeUl { get; set; }
-    public DateTimeOffset PreparedAtUtc { get; set; } = DateTimeOffset.UtcNow;
-    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public DateTimeOffset? PreparedAtUtc { get; set; }
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
+    public DateTimeOffset? CleaningConfirmedAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? UpdatedAtUtc { get; set; }
 
     public DabMixPosition? DabMixPosition { get; set; }
+    public ReagentBottle? DabAReagentBottle { get; set; }
+    public ReagentBottle? DabBReagentBottle { get; set; }
+    public User? CreatedByUser { get; set; }
+    public ICollection<DabBatchTask> Tasks { get; } = new List<DabBatchTask>();
+    public ICollection<DabBatchUsage> Usages { get; } = new List<DabBatchUsage>();
+    public ICollection<ReagentReservation> ReagentReservations { get; } = new List<ReagentReservation>();
+}
+
+public sealed class DabBatchTask
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string DabBatchId { get; set; } = string.Empty;
+    public string StainingTaskId { get; set; } = string.Empty;
+    public int RequiredVolumeUl { get; set; } = DabFormula.VolumePerSlideUl;
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    public DabBatch? DabBatch { get; set; }
+    public StainingTask? StainingTask { get; set; }
 }
 
 public sealed class DabBatchUsage
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string DabBatchId { get; set; } = string.Empty;
-    public string MachineRunId { get; set; } = string.Empty;
-    public string WorkflowStepExecutionId { get; set; } = string.Empty;
+    public string? MachineRunId { get; set; }
+    public string? WorkflowStepExecutionId { get; set; }
+    public string? StainingTaskId { get; set; }
+    public string? CommandId { get; set; }
+    public string? CreatedByUserId { get; set; }
     public int VolumeUl { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 
     public DabBatch? DabBatch { get; set; }
     public MachineRun? MachineRun { get; set; }
     public WorkflowStepExecution? WorkflowStepExecution { get; set; }
+    public StainingTask? StainingTask { get; set; }
+    public User? CreatedByUser { get; set; }
 }
+
+public static class DabBatchStatus
+{
+    public const string PendingPreparation = "PendingPreparation";
+    public const string Preparing = "Preparing";
+    public const string Available = "Available";
+    public const string Depleted = "Depleted";
+    public const string Expired = "Expired";
+    public const string AwaitingCleaning = "AwaitingCleaning";
+    public const string Cleaned = "Cleaned";
+    public const string Failed = "Failed";
+    public const string Unknown = "Unknown";
+    public const string LegacyUnverified = "LegacyUnverified";
+}
+
+public static class DabCleaningStatus
+{
+    public const string NotRequired = "NotRequired";
+    public const string Required = "Required";
+    public const string Confirmed = "Confirmed";
+    public const string NeedsManualResolution = "NeedsManualResolution";
+}
+
+public static class ReagentReservationKind
+{
+    public const string MachineRun = "MachineRun";
+    public const string DabBatch = "DabBatch";
+}
+
+public static class ReagentReservationStatus
+{
+    public const string Reserved = "Reserved";
+    public const string Consumed = "Consumed";
+    public const string Released = "Released";
+    public const string NeedsManualResolution = "NeedsManualResolution";
+}
+
+public static class DabFormula
+{
+    public const int DabARatioParts = 1;
+    public const int DabBRatioParts = 1;
+    public const int WaterRatioParts = 18;
+    public const int TotalRatioParts = DabARatioParts + DabBRatioParts + WaterRatioParts;
+    public const int VolumePerSlideUl = 200;
+    public const int LineReserveVolumeUl = 400;
+    public const int ValidityHours = 3;
+
+    public static DabFormulaVolumes CalculateRequired(int slideCount)
+    {
+        if (slideCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slideCount), "At least one slide is required.");
+        }
+
+        return Calculate((checked(slideCount * VolumePerSlideUl)) + LineReserveVolumeUl);
+    }
+
+    public static DabFormulaVolumes Calculate(int totalVolumeUl)
+    {
+        if (totalVolumeUl <= 0 || totalVolumeUl % TotalRatioParts != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(totalVolumeUl), "DAB volume must be a positive multiple of 20 uL.");
+        }
+
+        var onePart = totalVolumeUl / TotalRatioParts;
+        return new DabFormulaVolumes(totalVolumeUl, onePart, onePart, onePart * WaterRatioParts);
+    }
+}
+
+public sealed record DabFormulaVolumes(
+    int TotalVolumeUl,
+    int DabAVolumeUl,
+    int DabBVolumeUl,
+    int WaterVolumeUl);
 
 public sealed class Alarm
 {

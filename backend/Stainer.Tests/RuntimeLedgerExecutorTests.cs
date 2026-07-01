@@ -66,7 +66,7 @@ public sealed class RuntimeLedgerExecutorTests
         Assert.Equal(2, await verifyContext.ReagentConsumptions.CountAsync(x => x.MachineRunId == run.RunId && x.ReagentCode == "ABC"));
         Assert.Equal(800, await verifyContext.ReagentConsumptions.Where(x => x.MachineRunId == run.RunId && x.ReagentCode == "ABC").SumAsync(x => x.VolumeUl));
         var dabBatches = await verifyContext.DabBatches.AsNoTracking().ToListAsync();
-        Assert.Contains(dabBatches, x => x.ExpiresAtUtc == x.PreparedAtUtc.AddHours(3));
+        Assert.Contains(dabBatches, x => x.PreparedAtUtc.HasValue && x.ExpiresAtUtc == x.PreparedAtUtc.Value.AddHours(3));
         Assert.True(await verifyContext.Alarms.AnyAsync(x => x.MachineRunId == run.RunId && x.Code == "reagent_depleted"));
         Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "run.reagent_consumption"));
     }

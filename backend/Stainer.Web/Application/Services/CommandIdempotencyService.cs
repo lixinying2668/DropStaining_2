@@ -80,6 +80,10 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         {
             throw new BusinessRuleException("default_workflow_conflict", "Another request changed the default workflow. Refresh and retry.", StatusCodes.Status409Conflict);
         }
+        catch (DbUpdateException ex) when (IsDabPositionConflict(ex))
+        {
+            throw new BusinessRuleException("dab_position_occupied", "The selected DAB mix position was occupied by another command.", StatusCodes.Status409Conflict);
+        }
 
         return result.Response;
     }
@@ -122,6 +126,14 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             || message.Contains("ix_workflow_versions_default_experiment_type", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsDabPositionConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("dab_batches.dab_mix_position_id", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("ix_dab_batches_dab_mix_position_id", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("dab_mix_positions.active_dab_batch_id", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static T MarkReplay<T>(T response)
         where T : class
     {
@@ -136,6 +148,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             SampleScanSessionResponse x => x with { Replayed = true } as T ?? response,
             MockLisQueryResponse x => x with { Replayed = true } as T ?? response,
             MockDemoDataResponse x => x with { Replayed = true } as T ?? response,
+            DabBatchResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanConfirmationResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanSessionMutationResponse x => x with { Replayed = true } as T ?? response,
             AlarmMutationResponse x => x with { Replayed = true } as T ?? response,
