@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260702-r19";
+    private const string AssetVersion = "20260702-r19-patch1";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
@@ -237,7 +237,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         </section>
         <section class="dashboard-ops-grid">
           <article class="modern-card compact-card dashboard-checks"><div class="section-title"><h2>初始化与预检</h2><button class="btn btn-primary" onclick="initializeSystem()">执行 / 重试</button></div><div class="check-list" id="systemChecks"></div></article>
-          <article class="modern-card compact-card dashboard-events-card"><div class="section-title"><h2>最近事件</h2><button class="btn btn-soft" onclick="location.href='/history'">全部历史</button></div><div class="operator-event-list" id="dashboardEvents"></div></article>
+          <article class="modern-card compact-card dashboard-events-card"><div class="section-title"><h2>最近事件</h2><button class="btn btn-soft" onclick="openDashboardEventList()">查看事件</button></div><div class="operator-event-list" id="dashboardEvents"></div></article>
         </section>
         <div id="dashboardEventModal" class="modal-mask hidden"><div class="modal-card"><header><h2 id="dashboardEventTitle">事件详情</h2><button class="icon-btn" onclick="dashboardEventModal.classList.add('hidden')">×</button></header><div class="detail-grid" id="dashboardEventBody"></div><footer><button class="btn btn-soft" onclick="dashboardEventModal.classList.add('hidden')">关闭</button><button class="btn btn-primary" id="dashboardEventLink">打开关联页面</button></footer></div></div>
         """;
@@ -278,7 +278,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string RunContent()
     {
         return """
-        <section class="run-command-bar modern-card v18-runbar"><button class="command start" id="runStartButton" onclick="runAction('start')"><i>▶</i><b>启动</b><span>先执行强制校验</span></button><button class="command pause" id="runPauseButton" onclick="runAction('pause')"><i>Ⅱ</i><b>暂停</b><span>当前原子动作后生效</span></button><button class="command resume" id="runResumeButton" onclick="runAction('resume')"><i>↪</i><b>恢复</b><span>等待/孵育直接下一步</span></button><button class="command stop" id="runStopButton" onclick="confirmStop()"><i>■</i><b>整机停止</b><span>当前动作后停止</span></button><button class="command fault hidden" id="mockFaultButton" onclick="injectMockFault()"><i>!</i><b>Mock 故障</b><span>工程师 / 管理员</span></button><button class="command redo hidden" id="redoMajorStepButton" onclick="redoCurrentMajorStep()"><i>↺</i><b>大步骤重做</b><span>需填写原因</span></button><div class="run-badge"><span id="runStatus" class="status-chip status-idle"><i></i><b data-status-label>idle</b></span><small id="runIdSmall">未生成批号</small></div></section>
+        <section class="run-command-bar modern-card v18-runbar"><button class="command start" id="runStartButton" onclick="runAction('start')"><i>▶</i><b>启动前预检</b><span>通过后再启动运行</span></button><button class="command pause" id="runPauseButton" onclick="runAction('pause')"><i>Ⅱ</i><b>暂停</b><span>当前原子动作后生效</span></button><button class="command resume" id="runResumeButton" onclick="runAction('resume')"><i>↪</i><b>恢复</b><span>等待/孵育直接下一步</span></button><button class="command stop" id="runStopButton" onclick="confirmStop()"><i>■</i><b>整机停止</b><span>当前动作后停止</span></button><button class="command fault hidden" id="mockFaultButton" onclick="injectMockFault()"><i>!</i><b>Mock 故障</b><span>工程师 / 管理员</span></button><button class="command redo hidden" id="redoMajorStepButton" onclick="redoCurrentMajorStep()"><i>↺</i><b>大步骤重做</b><span>需填写原因</span></button><div class="run-badge"><span id="runStatus" class="status-chip status-idle"><i></i><b data-status-label>idle</b></span><small id="runIdSmall">未生成批号</small></div></section>
         <section class="run-grid">
           <article class="modern-card run-channels-card">
             <div class="section-title"><div><h2>实时通道状态</h2><p>状态推进以动作完成反馈或明确状态条件为准。</p></div><button class="btn btn-soft" onclick="refreshRun()">刷新</button></div>

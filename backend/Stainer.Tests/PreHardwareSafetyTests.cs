@@ -282,6 +282,23 @@ public sealed class PreHardwareSafetyTests
         Assert.True(health.IntegrityOk);
         Assert.Equal(0, health.PendingMigrationCount);
 
+        string historicalBackupFailureAlarmId;
+        await using (var arrangeScope = factory.Services.CreateAsyncScope())
+        {
+            var arrangeDbContext = arrangeScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var historicalAlarm = new Alarm
+            {
+                Code = "database_backup_failed",
+                Severity = "Critical",
+                Status = "Active",
+                Message = "Historical backup failure from a previous degraded run.",
+                CreatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5)
+            };
+            arrangeDbContext.Alarms.Add(historicalAlarm);
+            await arrangeDbContext.SaveChangesAsync();
+            historicalBackupFailureAlarmId = historicalAlarm.Id;
+        }
+
         var backup = await PostJsonAsync<DatabaseBackupResponse>(adminClient, "/api/database/backup", new
         {
             commandId = "cmd-database-backup-safety",
@@ -322,6 +339,32 @@ public sealed class PreHardwareSafetyTests
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "database.backup" && x.EntityId == backup.BackupPath));
+        var historicalAlarmAfterBackup = await dbContext.Alarms
+            .Include(x => x.Actions)
+            .SingleAsync(x => x.Id == historicalBackupFailureAlarmId);
+        Assert.Equal("Resolved", historicalAlarmAfterBackup.Status);
+        Assert.NotNull(historicalAlarmAfterBackup.ClearedAtUtc);
+        Assert.Contains(historicalAlarmAfterBackup.Actions, x => x.Action == "Acknowledged" && x.Message.Contains(backup.BackupPath, StringComparison.Ordinal));
+        Assert.Contains(historicalAlarmAfterBackup.Actions, x => x.Action == "Resolved" && x.Message.Contains(backup.BackupPath, StringComparison.Ordinal));
+        var backupFileName = Path.GetFileName(backup.BackupPath);
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x =>
+            x.Action == "alarm.resolve"
+            && x.EntityType == "Alarm"
+            && x.EntityId == historicalBackupFailureAlarmId
+            && x.Message.Contains(backupFileName)));
+        Assert.False(await dbContext.Alarms.AnyAsync(x => x.Code == "database_backup_failed" && x.Status != "Resolved"));
+
+        var backupStem = ResolveBackupStem(backup.BackupPath);
+        var formalBackupFiles = Directory.GetFiles(context.BackupDirectory)
+            .Select(Path.GetFileName)
+            .Where(name => name is not null && name.StartsWith(backupStem, StringComparison.Ordinal))
+            .ToList();
+        Assert.DoesNotContain(formalBackupFiles, name => name!.EndsWith(".db-journal", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(formalBackupFiles, name =>
+            name!.Contains("-vacuum-", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(name, Path.GetFileName(backup.BackupPath), StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(name, $"{Path.GetFileName(backup.BackupPath)}-wal", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(name, $"{Path.GetFileName(backup.BackupPath)}-shm", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -428,4 +471,22 @@ public sealed class PreHardwareSafetyTests
         string DatabasePath,
         string LogDirectory,
         string BackupDirectory);
+
+    private static string ResolveBackupStem(string backupPath)
+    {
+        var stem = Path.GetFileNameWithoutExtension(backupPath);
+        var copyIndex = stem.IndexOf("-copy-", StringComparison.OrdinalIgnoreCase);
+        if (copyIndex > 0)
+        {
+            return stem[..copyIndex];
+        }
+
+        var vacuumIndex = stem.IndexOf("-vacuum-", StringComparison.OrdinalIgnoreCase);
+        if (vacuumIndex > 0)
+        {
+            return stem[..vacuumIndex];
+        }
+
+        return stem;
+    }
 }

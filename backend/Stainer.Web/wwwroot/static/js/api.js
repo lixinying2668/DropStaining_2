@@ -38,11 +38,93 @@ function setButtonDisabledReason(button, disabled, reason=''){
 }
 function toast(message, danger=false){
   const el = document.getElementById('toast');
-  if(!el) return alert(message);
+  if(!el){
+    console[danger ? 'error' : 'log'](message);
+    return;
+  }
   el.textContent = message;
   el.classList.remove('hidden');
   el.style.background = danger ? '#991b1b' : '#07111f';
   setTimeout(()=> el.classList.add('hidden'), 2800);
+}
+function ensureOperatorDialog(){
+  let modal = document.getElementById('operatorDialogModal');
+  if(modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'operatorDialogModal';
+  modal.className = 'modal-mask operator-dialog hidden';
+  modal.innerHTML = `
+    <div class="modal-card operator-dialog-card" role="dialog" aria-modal="true" aria-labelledby="operatorDialogTitle">
+      <header><h2 id="operatorDialogTitle">确认操作</h2><button class="icon-btn" id="operatorDialogClose" type="button">x</button></header>
+      <div class="operator-dialog-body">
+        <p id="operatorDialogMessage"></p>
+        <div class="notice-box hidden" id="operatorDialogWarning"></div>
+        <label class="field-label hidden" id="operatorDialogInputWrap"><span id="operatorDialogInputLabel">原因</span><textarea class="input" id="operatorDialogInput" rows="3"></textarea></label>
+      </div>
+      <footer><button class="btn btn-soft" id="operatorDialogCancel" type="button">取消</button><button class="btn btn-primary" id="operatorDialogConfirm" type="button">确认</button></footer>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+function operatorConfirm(options){
+  const config = typeof options === 'string' ? {message: options} : (options || {});
+  const modal = ensureOperatorDialog();
+  const title = document.getElementById('operatorDialogTitle');
+  const message = document.getElementById('operatorDialogMessage');
+  const warning = document.getElementById('operatorDialogWarning');
+  const inputWrap = document.getElementById('operatorDialogInputWrap');
+  const inputLabel = document.getElementById('operatorDialogInputLabel');
+  const input = document.getElementById('operatorDialogInput');
+  const cancel = document.getElementById('operatorDialogCancel');
+  const confirmButton = document.getElementById('operatorDialogConfirm');
+  const close = document.getElementById('operatorDialogClose');
+  title.textContent = config.title || '确认操作';
+  message.textContent = config.message || '';
+  warning.textContent = config.warning || '';
+  warning.classList.toggle('hidden', !config.warning);
+  inputWrap.classList.toggle('hidden', !config.input && !config.reasonRequired && !config.reasonLabel);
+  inputLabel.textContent = config.inputLabel || config.reasonLabel || '原因';
+  input.value = config.defaultValue || '';
+  input.placeholder = config.placeholder || '';
+  cancel.textContent = config.cancelText || '取消';
+  confirmButton.textContent = config.confirmText || '确认';
+  confirmButton.classList.toggle('danger-action', !!config.danger);
+  modal.classList.remove('hidden');
+  if(config.input || config.reasonRequired || config.reasonLabel) setTimeout(()=>input.focus(), 0);
+  return new Promise(resolve => {
+    const cleanup = result => {
+      modal.classList.add('hidden');
+      cancel.onclick = confirmButton.onclick = close.onclick = null;
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onKey = event => {
+      if(event.key === 'Escape') cleanup({confirmed:false, value:null, reason:null});
+      if(event.key === 'Enter' && (event.ctrlKey || event.metaKey)) confirmButton.click();
+    };
+    cancel.onclick = () => cleanup({confirmed:false, value:null, reason:null});
+    close.onclick = cancel.onclick;
+    confirmButton.onclick = () => {
+      const value = input.value.trim();
+      if((config.reasonRequired || config.inputRequired) && !value){
+        toast(config.requiredMessage || '请填写原因。', true);
+        input.focus();
+        return;
+      }
+      cleanup({confirmed:true, value, reason:value});
+    };
+    document.addEventListener('keydown', onKey);
+  });
+}
+async function operatorPrompt(message, defaultValue='', options={}){
+  const result = await operatorConfirm(Object.assign({}, options, {
+    title: options.title || '填写信息',
+    message,
+    input: true,
+    defaultValue,
+    confirmText: options.confirmText || '确认'
+  }));
+  return result.confirmed ? result.value : null;
 }
 async function logout(){
   try{ await api('/api/logout', {method:'POST'}); }catch(e){}

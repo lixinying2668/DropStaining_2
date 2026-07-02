@@ -83,8 +83,25 @@ function renderDashboard(state){
 function renderDashboardEvents(events){
   const root = document.getElementById('dashboardEvents');
   if(!root) return;
-  root.innerHTML = (events || []).slice(0, 8).map(event => `<button type="button" class="operator-event-row" onclick="openDashboardEvent('${escapeHtml(event.id)}')"><span>${escapeHtml(formatDateTime(event.occurredAtUtc))}</span><b>${escapeHtml(event.title)}</b><em>${escapeHtml(event.status || event.type)}</em></button>`).join('')
-    || '<div class="empty-state"><b>暂无正式事件</b><span>初始化、命令和运行事件会显示在这里。</span></div>';
+  const list = (events || []).slice(0, 20);
+  const latest = list[0];
+  root.innerHTML = `<button type="button" class="operator-event-entry" onclick="openDashboardEventList()"><b>查看事件</b><span>${latest ? escapeHtml(latest.title || latest.type || '最近事件') : '暂无正式事件'}</span><em>${list.length} 条</em></button>`;
+}
+
+function openDashboardEventList(){
+  const events = (window.machineStateSnapshot?.recentEvents || []).slice(0, 20);
+  setText('dashboardEventTitle', '最近事件');
+  const body = document.getElementById('dashboardEventBody');
+  if(body){
+    body.classList.remove('detail-grid');
+    body.classList.add('operator-event-list');
+    body.innerHTML = events.length
+      ? events.map(event => `<button type="button" class="operator-event-row" onclick="openDashboardEvent('${escapeHtml(event.id)}')"><span>${escapeHtml(formatDateTime(event.occurredAtUtc))}</span><b>${escapeHtml(event.title)}</b><em>${escapeHtml(event.status || event.type)}</em></button>`).join('')
+      : '<div class="empty-state"><b>暂无正式事件</b><span>初始化、命令和运行事件会在这里显示。</span></div>';
+  }
+  const link = document.getElementById('dashboardEventLink');
+  if(link) link.onclick = () => { location.href = '/history'; };
+  document.getElementById('dashboardEventModal')?.classList.remove('hidden');
 }
 
 function openDashboardEvent(eventId){
@@ -93,6 +110,8 @@ function openDashboardEvent(eventId){
   setText('dashboardEventTitle', event.title || '事件详情');
   const body = document.getElementById('dashboardEventBody');
   if(body){
+    body.classList.add('detail-grid');
+    body.classList.remove('operator-event-list');
     body.innerHTML = `<div><span>时间</span><b>${escapeHtml(formatDateTime(event.occurredAtUtc))}</b></div><div><span>类型</span><b>${escapeHtml(event.type || '--')}</b></div><div><span>状态</span><b>${escapeHtml(event.status || '--')}</b></div><div><span>详情</span><b>${escapeHtml(event.detail || '--')}</b></div>`;
   }
   const link = document.getElementById('dashboardEventLink');
@@ -418,7 +437,13 @@ function showDabPosition(code){
 async function runDabCleaning(batchId, action){
   if(!batchId) return;
   const label = action === 'start' ? '启动清洗' : '确认清洗完成';
-  if(!confirm(`${label}？该操作将写入正式 DAB 批次和审计。`)) return;
+  const decision = await operatorConfirm({
+    title:label,
+    message:`${label}将写入正式 DAB 批次和审计。`,
+    warning:'请确认目标批次与清洗状态无误。',
+    confirmText:label
+  });
+  if(!decision.confirmed) return;
   await api(`/api/dab/batches/${encodeURIComponent(batchId)}/cleaning/${action}`, {
     method:'POST',
     body:JSON.stringify({commandId:commandId(`dab-cleaning-${action}`)})
@@ -686,7 +711,13 @@ async function completeReagentScanSession(){
     return;
   }
   const message = `完成当前扫码会话？\n已扫描：${Number(active.scannedCount || 0)} / ${Number(active.totalPositionCount || 40)}\n未扫描：${Number(active.unscannedCount || 0)}`;
-  if(!confirm(message)) return;
+  const decision = await operatorConfirm({
+    title:'完成扫码会话',
+    message,
+    warning:'完成后将以正式扫码结果参与启动前预检。',
+    confirmText:'确认完成'
+  });
+  if(!decision.confirmed) return;
   try{
     const result = await api(`/api/reagents/scan-sessions/${encodeURIComponent(active.scanSessionId)}/complete`, {
       method:'POST',
@@ -804,7 +835,15 @@ async function confirmReagentPositionScan(){
   const mode = document.getElementById('reagentScanMode')?.value || 'barcode';
   const rawBarcode = document.getElementById('reagentBarcodeInput')?.value?.trim() || '';
   const expirationDate = document.getElementById('reagentExpirationInput')?.value || null;
-  if(mode === 'empty' && !confirm(`确认将 ${pos} 标记为空位？`)) return;
+  if(mode === 'empty'){
+    const decision = await operatorConfirm({
+      title:'确认空位',
+      message:`确认将 ${pos} 标记为空位？`,
+      warning:'空位确认会写入正式扫码会话。',
+      confirmText:'标记为空位'
+    });
+    if(!decision.confirmed) return;
+  }
   if(mode !== 'empty' && !rawBarcode){
     toast('请输入 Mock 条码原始文本，或选择空位确认。', true);
     return;
@@ -1104,7 +1143,15 @@ async function applyChannelExperimentTypeSelection(type){
     toast('更换实验类型必须填写原因', true);
     return;
   }
-  if(reasonVisible && !confirm(`确认将 ${activeChannelScriptLetter} 通道重新绑定为当前默认 ${experimentType} 流程？`)) return;
+  if(reasonVisible){
+    const decision = await operatorConfirm({
+      title:'确认更换实验类型',
+      message:`确认将 ${activeChannelScriptLetter} 通道重新绑定为当前默认 ${experimentType} 流程？`,
+      warning:'该操作只允许在未启动批次上执行，并会写入审计。',
+      confirmText:'确认更换'
+    });
+    if(!decision.confirmed) return;
+  }
   try{
     const batch = await ensureActiveChannelBatch(activeChannelScriptLetter);
     const result = await api('/api/channel-batches/experiment-type-selection', {
@@ -1811,13 +1858,20 @@ function renderTraceAlarmActions(alarms){
 async function acknowledgeTraceAlarm(alarmId, severity){
   let reason = '';
   if(['Error','Critical'].includes(severity)){
-    reason = prompt('确认 Error/Critical 告警必须填写处理原因：') || '';
+    reason = await operatorPrompt('确认 Error/Critical 告警必须填写处理原因。', '', {
+      title:'确认告警',
+      inputRequired:true,
+      requiredMessage:'请填写处理原因。'
+    }) || '';
     if(!reason.trim()){
       toast('请填写处理原因。', true);
       return;
     }
   }else{
-    reason = prompt('处理原因（可选）：') || '';
+    reason = await operatorPrompt('处理原因（可选）。', '', {
+      title:'确认告警',
+      confirmText:'确认告警'
+    }) || '';
   }
   try{
     await api(`/api/alarms/${encodeURIComponent(alarmId)}/acknowledge`, {

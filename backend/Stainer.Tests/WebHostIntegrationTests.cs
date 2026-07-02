@@ -64,7 +64,7 @@ public sealed class WebHostIntegrationTests
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("app-shell", controlConsole);
         Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260702-r19", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260702-r19-patch1", controlConsole);
         Assert.DoesNotContain("top-panel", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
@@ -175,6 +175,8 @@ public sealed class WebHostIntegrationTests
 
         Assert.Contains("dashboardEvents", dashboard);
         Assert.Contains("dashboardEventModal", dashboard);
+        Assert.Contains("openDashboardEventList()", dashboard);
+        Assert.DoesNotContain("operator-event-row", dashboard);
         Assert.DoesNotContain("DAB 临时配液区", dashboard);
         Assert.Contains("channelScriptModal", samples);
         Assert.DoesNotContain("单玻片流程", samples);
@@ -183,12 +185,19 @@ public sealed class WebHostIntegrationTests
         Assert.Contains("runResourceGrid", run);
         Assert.Contains("runNeedles", run);
         Assert.Contains("runCommandStages", run);
+        Assert.Contains("启动前预检", run);
 
         Assert.Contains("/api/operator/snapshot", hostScript);
         Assert.Contains("/api/dab/batches/", hostScript);
         Assert.DoesNotContain("/api/state", hostScript);
         Assert.Contains("/api/operator/snapshot", runScript);
         Assert.Contains("/api/runs/", runScript);
+        Assert.Contains("operatorConfirm", runScript);
+        Assert.DoesNotContain("MockDeviceState", runScript);
+        Assert.DoesNotContain("状态哈希", runScript);
+        Assert.DoesNotContain("confirm(", runScript);
+        Assert.DoesNotContain("prompt(", runScript);
+        Assert.DoesNotContain("alert(", runScript);
         Assert.DoesNotContain("/api/state", runScript);
         Assert.DoesNotContain("/api/run/start", runScript);
     }

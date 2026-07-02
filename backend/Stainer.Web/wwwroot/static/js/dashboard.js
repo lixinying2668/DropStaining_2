@@ -3,7 +3,11 @@ async function initializeSystem(){
     const latest = await api('/api/device-initialization');
     let result;
     if(latest?.runId && latest.status === 'Failed'){
-      const reason = window.prompt('请输入重试初始化原因：', '设备检查失败后重试');
+      const reason = await operatorPrompt('请输入重试初始化原因。', '设备检查失败后重试', {
+        title:'重试初始化',
+        inputRequired:true,
+        requiredMessage:'重试初始化必须填写原因。'
+      });
       if(!reason?.trim()) return;
       result = await api(`/api/device-initialization/${encodeURIComponent(latest.runId)}/retry`, {
         method:'POST',

@@ -83,21 +83,27 @@ public sealed class DatabaseMaintenanceService(
 
         var backupDirectory = ResolveBackupDirectory(request.OutputDirectory);
         Directory.CreateDirectory(backupDirectory);
-        var backupPath = Path.Combine(backupDirectory, $"stainer-backup-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}Z-{Guid.NewGuid():N}.db");
+        var backupStem = $"stainer-backup-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}Z-{Guid.NewGuid():N}";
+        var backupPath = Path.Combine(backupDirectory, $"{backupStem}.db");
+        var attemptDirectory = ResolveAttemptDirectory(backupStem);
+        BackupSqliteResult backup;
+        bool afterIntegrityOk;
         try
         {
-            backupPath = await BackupSqliteAsync(before.DatabasePath, backupPath, cancellationToken);
+            backup = await BackupSqliteAsync(before.DatabasePath, backupPath, attemptDirectory, cancellationToken);
+            backupPath = backup.BackupPath;
+            afterIntegrityOk = await CheckBackupIntegrityAsync(backupPath, cancellationToken);
         }
-        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+        catch (Exception primaryEx) when (primaryEx is SqliteException or IOException or UnauthorizedAccessException)
         {
+            var failureMessage = $"Database backup failed. Source={before.DatabasePath}; Target={backupPath}; Reason={primaryEx.Message}";
             await SaveBackupAlarmAsync(
                 "database_backup_failed",
-                $"Database backup failed: {ex.Message}",
+                failureMessage,
                 cancellationToken);
-            throw new BusinessRuleException("database_backup_failed", $"Database backup failed: {ex.Message}", StatusCodes.Status500InternalServerError);
+            throw new BusinessRuleException("database_backup_failed", failureMessage, StatusCodes.Status500InternalServerError);
         }
 
-        var afterIntegrityOk = await CheckBackupIntegrityAsync(backupPath, cancellationToken);
         if (!afterIntegrityOk)
         {
             await SaveBackupAlarmAsync(
@@ -107,6 +113,10 @@ public sealed class DatabaseMaintenanceService(
             throw new BusinessRuleException("database_backup_integrity_failed", "Database backup failed integrity check.", StatusCodes.Status500InternalServerError);
         }
 
+        var completionMessage = backup.AttemptMessages.Count == 0
+            ? "Database backup completed."
+            : $"Database backup completed via {backup.Method} after fallback. FinalBackup={backupPath}. {string.Join(" | ", backup.AttemptMessages)}";
+
         var response = new DatabaseBackupResponse(
             true,
             commandId,
@@ -115,8 +125,10 @@ public sealed class DatabaseMaintenanceService(
             before.IntegrityOk,
             afterIntegrityOk,
             DateTimeOffset.UtcNow,
-            "Database backup completed.");
+            completionMessage);
 
+        var now = DateTimeOffset.UtcNow;
+        var actorUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId;
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         dbContext.CommandReceipts.Add(new CommandReceipt
         {
@@ -125,28 +137,71 @@ public sealed class DatabaseMaintenanceService(
             RequestHash = requestHash,
             Status = "Completed",
             ResponseJson = JsonSerializer.Serialize(response, JsonOptions),
-            ActorUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,
+            ActorUserId = actorUserId,
             EntityType = "DatabaseBackup",
             EntityId = backupPath,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-            CompletedAtUtc = DateTimeOffset.UtcNow
+            CreatedAtUtc = now,
+            CompletedAtUtc = now
         });
         dbContext.AuditLogs.Add(new AuditLog
         {
-            ActorUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,
+            ActorUserId = actorUserId,
             Action = "database.backup",
             EntityType = "DatabaseBackup",
             EntityId = backupPath,
-            Message = JsonSerializer.Serialize(new { commandId, backupPath, before.DatabasePath }, JsonOptions),
-            CreatedAtUtc = DateTimeOffset.UtcNow
+            Message = JsonSerializer.Serialize(new { commandId, backupPath, before.DatabasePath, backup.Method, backup.AttemptMessages, attemptDirectory = backup.AttemptDirectory, backup.AttemptCleanup }, JsonOptions),
+            CreatedAtUtc = now
         });
+        if (backup.AttemptMessages.Count > 0)
+        {
+            dbContext.Alarms.Add(new Alarm
+            {
+                Code = "database_backup_degraded",
+                Severity = "Warning",
+                Message = $"Database backup completed via {backup.Method} after earlier methods failed. FinalBackup={backupPath}; FailedAttempts={string.Join(" | ", backup.AttemptMessages)}",
+                Status = "Active",
+                CreatedAtUtc = now
+            });
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                Action = "database.backup_degraded",
+                EntityType = "DatabaseBackup",
+                EntityId = backupPath,
+                Message = JsonSerializer.Serialize(new { commandId, backupPath, backup.Method, backup.AttemptMessages }, JsonOptions),
+                CreatedAtUtc = now
+            });
+        }
+
+        if (!backup.AttemptCleanup.Succeeded)
+        {
+            dbContext.Alarms.Add(new Alarm
+            {
+                Code = "database_backup_attempt_cleanup_failed",
+                Severity = "Warning",
+                Message = $"Database backup succeeded but attempt cleanup needs maintenance. AttemptDirectory={backup.AttemptDirectory}; Reason={backup.AttemptCleanup.Message}; FinalBackup={backupPath}",
+                Status = "Active",
+                CreatedAtUtc = now
+            });
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                Action = "database.backup_attempt_cleanup_failed",
+                EntityType = "DatabaseBackup",
+                EntityId = backupPath,
+                Message = JsonSerializer.Serialize(new { commandId, backupPath, backup.AttemptDirectory, backup.AttemptCleanup }, JsonOptions),
+                CreatedAtUtc = now
+            });
+        }
+
+        await ResolveHistoricalBackupFailureAlarmsAsync(commandId, backupPath, actorUserId, now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         await safetyLogWriter.WriteAsync(
             "runtime",
-            "Information",
-            "Database backup completed.",
+            backup.AttemptMessages.Count == 0 ? "Information" : "Warning",
+            completionMessage,
             new SafetyLogContext(CommandId: commandId, DeviceMode: "Mock", Actor: actor.Username, Source: "DatabaseMaintenanceService"),
             cancellationToken: cancellationToken);
 
@@ -222,12 +277,12 @@ public sealed class DatabaseMaintenanceService(
         return Path.GetFullPath(Path.Combine(environment.ContentRootPath, "..", "..", "data", "backups"));
     }
 
-    private async Task SaveBackupAlarmAsync(string code, string message, CancellationToken cancellationToken)
+    private async Task SaveBackupAlarmAsync(string code, string message, CancellationToken cancellationToken, string severity = "Critical")
     {
         dbContext.Alarms.Add(new Alarm
         {
             Code = code,
-            Severity = "Critical",
+            Severity = severity,
             Message = message,
             Status = "Active",
             CreatedAtUtc = DateTimeOffset.UtcNow
@@ -235,43 +290,127 @@ public sealed class DatabaseMaintenanceService(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private static async Task<string> BackupSqliteAsync(string databasePath, string backupPath, CancellationToken cancellationToken)
+    private async Task<int> ResolveHistoricalBackupFailureAlarmsAsync(
+        string commandId,
+        string backupPath,
+        string? actorUserId,
+        DateTimeOffset resolvedAt,
+        CancellationToken cancellationToken)
     {
+        var alarms = await dbContext.Alarms
+            .Include(x => x.Actions)
+            .Where(x => x.Code == "database_backup_failed" && x.Status != "Resolved")
+            .ToListAsync(cancellationToken);
+
+        foreach (var alarm in alarms)
+        {
+            var previousStatus = alarm.Status;
+            if (alarm.Status == "Active")
+            {
+                alarm.Actions.Add(new AlarmAction
+                {
+                    ActorUserId = actorUserId,
+                    Action = "Acknowledged",
+                    Message = $"Verified backup succeeded before closure. CommandId={commandId}; BackupPath={backupPath}",
+                    CreatedAtUtc = resolvedAt
+                });
+            }
+
+            alarm.Status = "Resolved";
+            alarm.ClearedAtUtc = resolvedAt;
+            alarm.Actions.Add(new AlarmAction
+            {
+                ActorUserId = actorUserId,
+                Action = "Resolved",
+                Message = $"Closed after verified backup succeeded. CommandId={commandId}; BackupPath={backupPath}",
+                CreatedAtUtc = resolvedAt
+            });
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                Action = "alarm.resolve",
+                EntityType = "Alarm",
+                EntityId = alarm.Id,
+                Message = JsonSerializer.Serialize(new { commandId, backupPath, alarm.Code, previousStatus }, JsonOptions),
+                CreatedAtUtc = resolvedAt
+            });
+        }
+
+        return alarms.Count;
+    }
+
+    private static string ResolveAttemptDirectory(string backupStem)
+    {
+        var safeStem = string.Concat(backupStem.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-'));
+        return Path.GetFullPath(Path.Combine(Path.GetTempPath(), "stainer-backup-attempts", safeStem));
+    }
+
+    private static async Task<BackupSqliteResult> BackupSqliteAsync(string databasePath, string backupPath, string attemptDirectory, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(attemptDirectory);
+        var failedCandidates = new List<string>();
+        var attemptMessages = new List<string>();
+        var attemptBackupPath = Path.Combine(attemptDirectory, Path.GetFileName(backupPath));
         try
         {
-            await BackupSqliteWithBackupApiAsync(databasePath, backupPath, cancellationToken);
-            return backupPath;
+            await BackupSqliteWithBackupApiAsync(databasePath, attemptBackupPath, cancellationToken);
+            PromoteBackup(attemptBackupPath, backupPath);
+            var cleanup = await CleanupAttemptDirectoryWithRetryAsync(attemptDirectory, cancellationToken);
+            return new BackupSqliteResult(backupPath, "sqlite-backup-api", attemptMessages, attemptDirectory, cleanup);
         }
-        catch (SqliteException)
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
         {
-            var fallbackPath = TryCleanupPartialBackup(backupPath)
-                ? backupPath
-                : Path.Combine(
-                    Path.GetDirectoryName(backupPath) ?? ".",
-                    $"{Path.GetFileNameWithoutExtension(backupPath)}-vacuum-{Guid.NewGuid():N}.db");
+            failedCandidates.Add(attemptBackupPath);
+            attemptMessages.Add($"sqlite-backup-api failed for {attemptBackupPath}: {ex.Message}");
+            TryCleanupPartialBackup(attemptBackupPath);
+            var vacuumAttemptPath = Path.Combine(
+                attemptDirectory,
+                $"{Path.GetFileNameWithoutExtension(backupPath)}-vacuum-{Guid.NewGuid():N}.db");
+            var vacuumBackupPath = Path.Combine(
+                Path.GetDirectoryName(backupPath) ?? ".",
+                Path.GetFileName(vacuumAttemptPath));
             try
             {
-                await BackupSqliteWithVacuumIntoAsync(databasePath, fallbackPath, cancellationToken);
-                return fallbackPath;
+                await BackupSqliteWithVacuumIntoAsync(databasePath, vacuumAttemptPath, cancellationToken);
+                PromoteBackup(vacuumAttemptPath, vacuumBackupPath);
+                var cleanup = await CleanupAttemptDirectoryWithRetryAsync(attemptDirectory, cancellationToken);
+                return new BackupSqliteResult(vacuumBackupPath, "vacuum-into", attemptMessages, attemptDirectory, cleanup);
             }
-            catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException)
+            catch (Exception vacuumEx) when (vacuumEx is SqliteException or IOException or UnauthorizedAccessException)
             {
+                failedCandidates.Add(vacuumAttemptPath);
+                attemptMessages.Add($"vacuum-into failed for {vacuumAttemptPath}: {vacuumEx.Message}");
+                TryCleanupPartialBackup(vacuumAttemptPath);
+                var copyAttemptPath = Path.Combine(
+                    attemptDirectory,
+                    $"{Path.GetFileNameWithoutExtension(backupPath)}-copy-{Guid.NewGuid():N}.db");
                 var copyPath = Path.Combine(
                     Path.GetDirectoryName(backupPath) ?? ".",
-                    $"{Path.GetFileNameWithoutExtension(backupPath)}-copy-{Guid.NewGuid():N}.db");
+                    Path.GetFileName(copyAttemptPath));
                 await CheckpointSqliteAsync(databasePath, cancellationToken);
-                await using var source = new FileStream(databasePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 81920, useAsync: true);
-                await using var destination = new FileStream(copyPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-                await source.CopyToAsync(destination, cancellationToken);
-                return copyPath;
+                await using (var source = new FileStream(databasePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 81920, useAsync: true))
+                await using (var destination = new FileStream(copyAttemptPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                {
+                    await source.CopyToAsync(destination, cancellationToken);
+                }
+
+                PromoteBackup(copyAttemptPath, copyPath);
+                var cleanup = await CleanupAttemptDirectoryWithRetryAsync(attemptDirectory, cancellationToken);
+                return new BackupSqliteResult(copyPath, "checkpoint-copy", attemptMessages, attemptDirectory, cleanup);
             }
         }
     }
 
+    private static void PromoteBackup(string attemptPath, string backupPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(backupPath) ?? ".");
+        File.Move(attemptPath, backupPath);
+    }
+
     private static async Task BackupSqliteWithBackupApiAsync(string databasePath, string backupPath, CancellationToken cancellationToken)
     {
-        await using var source = new SqliteConnection($"Data Source={databasePath}");
-        await using var destination = new SqliteConnection($"Data Source={backupPath}");
+        await using var source = new SqliteConnection(BuildSqliteConnectionString(databasePath));
+        await using var destination = new SqliteConnection(BuildSqliteConnectionString(backupPath));
         await source.OpenAsync(cancellationToken);
         await destination.OpenAsync(cancellationToken);
         source.BackupDatabase(destination);
@@ -279,7 +418,7 @@ public sealed class DatabaseMaintenanceService(
 
     private static async Task BackupSqliteWithVacuumIntoAsync(string databasePath, string backupPath, CancellationToken cancellationToken)
     {
-        await using var source = new SqliteConnection($"Data Source={databasePath}");
+        await using var source = new SqliteConnection(BuildSqliteConnectionString(databasePath));
         await source.OpenAsync(cancellationToken);
         await using (var timeout = source.CreateCommand())
         {
@@ -294,7 +433,7 @@ public sealed class DatabaseMaintenanceService(
 
     private static async Task CheckpointSqliteAsync(string databasePath, CancellationToken cancellationToken)
     {
-        await using var connection = new SqliteConnection($"Data Source={databasePath}");
+        await using var connection = new SqliteConnection(BuildSqliteConnectionString(databasePath));
         await connection.OpenAsync(cancellationToken);
         await using var timeout = connection.CreateCommand();
         timeout.CommandText = $"PRAGMA busy_timeout = {DatabaseInitializer.MinimumBusyTimeoutMilliseconds};";
@@ -312,6 +451,7 @@ public sealed class DatabaseMaintenanceService(
             {
                 if (File.Exists(path))
                 {
+                    File.SetAttributes(path, FileAttributes.Normal);
                     File.Delete(path);
                 }
             }
@@ -328,14 +468,96 @@ public sealed class DatabaseMaintenanceService(
         }
     }
 
+    private static async Task CleanupPartialBackupsWithRetryAsync(IEnumerable<string> backupPaths, CancellationToken cancellationToken)
+    {
+        foreach (var path in backupPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                if (TryCleanupPartialBackup(path))
+                {
+                    break;
+                }
+
+                await Task.Delay(250, cancellationToken);
+            }
+        }
+    }
+
+    private static async Task<BackupAttemptCleanupResult> CleanupAttemptDirectoryWithRetryAsync(string attemptDirectory, CancellationToken cancellationToken)
+    {
+        var fullAttemptDirectory = Path.GetFullPath(attemptDirectory);
+        var attemptRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "stainer-backup-attempts"));
+        if (!IsWithinDirectory(fullAttemptDirectory, attemptRoot))
+        {
+            return new BackupAttemptCleanupResult(false, $"Refused to clean attempt directory outside temp root: {fullAttemptDirectory}");
+        }
+
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(fullAttemptDirectory))
+                {
+                    return new BackupAttemptCleanupResult(true, "Attempt directory was already absent.");
+                }
+
+                Directory.Delete(fullAttemptDirectory, recursive: true);
+                return new BackupAttemptCleanupResult(true, "Attempt directory cleaned.");
+            }
+            catch (IOException ex)
+            {
+                if (attempt == 9)
+                {
+                    return new BackupAttemptCleanupResult(false, ex.Message);
+                }
+
+                await Task.Delay(250, cancellationToken);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                if (attempt == 9)
+                {
+                    return new BackupAttemptCleanupResult(false, ex.Message);
+                }
+
+                await Task.Delay(250, cancellationToken);
+            }
+        }
+
+        return new BackupAttemptCleanupResult(false, "Attempt directory cleanup did not complete.");
+    }
+
+    private static bool IsWithinDirectory(string childPath, string parentPath)
+    {
+        var normalizedParent = parentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedChild = childPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return normalizedChild.StartsWith(normalizedParent, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static async Task<bool> CheckBackupIntegrityAsync(string backupPath, CancellationToken cancellationToken)
     {
-        await using var connection = new SqliteConnection($"Data Source={backupPath};Mode=ReadOnly");
+        await using var connection = new SqliteConnection(BuildSqliteConnectionString(backupPath, readOnly: true));
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA integrity_check;";
         var result = await command.ExecuteScalarAsync(cancellationToken);
         return string.Equals(Convert.ToString(result), "ok", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildSqliteConnectionString(string databasePath, bool readOnly = false)
+    {
+        var builder = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false
+        };
+        if (readOnly)
+        {
+            builder.Mode = SqliteOpenMode.ReadOnly;
+        }
+
+        return builder.ToString();
     }
 
     private static string RequireCommandId(string commandId)
@@ -354,4 +576,15 @@ public sealed class DatabaseMaintenanceService(
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(json));
         return Convert.ToHexString(bytes);
     }
+
+    private sealed record BackupSqliteResult(
+        string BackupPath,
+        string Method,
+        IReadOnlyList<string> AttemptMessages,
+        string AttemptDirectory,
+        BackupAttemptCleanupResult AttemptCleanup);
+
+    private sealed record BackupAttemptCleanupResult(
+        bool Succeeded,
+        string Message);
 }

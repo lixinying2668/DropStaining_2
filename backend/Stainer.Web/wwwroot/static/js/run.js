@@ -30,7 +30,7 @@ async function loadRunContext(){
   currentRunSnapshot = run;
   operatorRunSnapshot = operatorSnapshot;
   currentUserSnapshot = operatorSnapshot?.activeUser || null;
-  systemInfoSnapshot = systemInfo || {deviceMode:'Mock', deviceStateSource:'MockDeviceState'};
+  systemInfoSnapshot = systemInfo || {deviceMode:'Mock'};
   return run;
 }
 
@@ -62,9 +62,14 @@ async function runAction(action){
 }
 
 async function confirmStop(){
-  if(confirm('普通整机停止将在当前原子动作完成后停止后续调度。确认执行？')){
-    await runAction('stop');
-  }
+  const result = await operatorConfirm({
+    title:'确认整机停止',
+    message:'普通整机停止将在当前原子动作完成后停止后续调度。',
+    warning:'停止不会把未完成动作自动视为完成，后续需要按正式状态处理。',
+    confirmText:'确认停止',
+    danger:true
+  });
+  if(result.confirmed) await runAction('stop');
 }
 
 async function openValidationModal(autoStart=false){
@@ -104,18 +109,18 @@ function renderPreflightReport(report){
   setText('validationSlidesState', failures.some(x => x.area === 'Tasks' || x.area === 'Workflow') ? 'FAIL' : 'PASS');
   setText('validationReagents', failures.some(x => x.area === 'Reagents') ? '存在阻断' : `${warnings.length} warning`);
   setText('validationReagentsState', failures.some(x => x.area === 'Reagents') ? 'FAIL' : 'PASS');
-  setText('validationInit', 'Mock');
-  setText('validationInitState', 'MockDeviceState');
+  setText('validationInit', systemInfoSnapshot?.deviceMode === 'Real' ? '真实设备模式' : '模拟设备模式');
+  setText('validationInitState', failures.some(x => x.area === 'Device') ? 'BLOCK' : 'PASS');
 
   if(body){
-    const summary = `<div class="validation-ok"><b>正式预检报告</b><span>预检时间：${escapeHtml(formatDateTime(report.generatedAtUtc))} · 关联任务：${Number(report.taskCount || 0)} · Fail：${failures.length} · Warning：${warnings.length} · 允许启动：${report.ok ? '是' : '否'}</span><small>当前模式：${escapeHtml(systemInfoSnapshot?.deviceMode || 'Mock')}；设备状态来源：${escapeHtml(systemInfoSnapshot?.deviceStateSource || 'MockDeviceState')}；状态哈希：${escapeHtml((report.stateHash || '').slice(0, 12))}</small></div>`;
+    const summary = `<div class="validation-ok"><b>正式预检报告</b><span>预检时间：${escapeHtml(formatDateTime(report.generatedAtUtc))} · 关联任务：${Number(report.taskCount || 0)} · Fail：${failures.length} · Warning：${warnings.length} · 允许启动：${report.ok ? '是' : '否'}</span><small>设备状态来自正式后端快照；预检通过后才允许创建并启动运行。</small></div>`;
     const grouped = groupBy(issues, x => x.area || 'Other');
     const rows = Object.entries(grouped).map(([area, items]) => `<div class="validation-group"><h3>${escapeHtml(preflightAreaLabel(area))}</h3>${items.map(item => `<div class="validation-issue ${String(item.severity || '').toLowerCase() === 'warning' ? 'warning' : ''}"><b>${escapeHtml(item.code)}</b><span>${escapeHtml(item.message)}</span><em>${escapeHtml(item.severity || 'Fail')}</em></div>`).join('') || '<div class="validation-ok"><b>Pass</b><span>当前分组无阻断项。</span></div>'}</div>`).join('');
     body.innerHTML = summary + (Object.keys(grouped).length ? rows : '<div class="validation-ok"><b>全部关键项通过</b><span>通道脚本、任务、试剂与 Mock 设备状态满足启动条件。</span></div>');
   }
   if(btn){
     btn.disabled = !report.ok;
-    btn.textContent = report.ok ? '启动整机运行' : '预检失败，禁止启动';
+    btn.textContent = report.ok ? '启动运行' : '预检失败，禁止启动';
   }
 }
 
@@ -163,7 +168,13 @@ async function forceStartAfterValidation(){
 
   const run = await ensureRunCreated();
   if(!run) return;
-  if(!confirm('确认启动 Mock 运行？启动后 ChannelBatch 与 Slot 将锁定。')) return;
+  const decision = await operatorConfirm({
+    title:'确认启动运行',
+    message:'启动后通道批次与 Slot 将锁定，并按正式命令账本推进。',
+    warning:'请确认样本、试剂、DAB、设备预检均已通过。',
+    confirmText:'启动运行'
+  });
+  if(!decision.confirmed) return;
 
   await api(`/api/runs/${encodeURIComponent(run.id || run.runId)}/start`, {
     method:'POST',
@@ -217,7 +228,11 @@ async function injectMockFault(){
     toast('故障注入仅 Mock 模式下的工程师或管理员可用。', true);
     return;
   }
-  const message = prompt('选择/输入 Mock 故障类型：dispense_failure / temperature_failure / communication_timeout / device_disconnected', 'dispense_failure');
+  const message = await operatorPrompt('选择或输入故障类型：dispense_failure / temperature_failure / communication_timeout / device_disconnected', 'dispense_failure', {
+    title:'注入模拟故障',
+    inputRequired:true,
+    requiredMessage:'请输入故障类型。'
+  });
   if(!message) return;
   await api(`/api/runs/${encodeURIComponent(run.id)}/fault`, {
     method:'POST',
@@ -231,12 +246,23 @@ async function injectMockFault(){
 async function redoCurrentMajorStep(){
   const run = await ensureCurrentRun();
   if(!run) return;
-  const reason = prompt('请输入大步骤重做原因');
+  const reason = await operatorPrompt('请输入大步骤重做原因。', '', {
+    title:'大步骤重做',
+    inputRequired:true,
+    requiredMessage:'大步骤重做必须填写原因。'
+  });
   if(!reason || !reason.trim()){
     toast('大步骤重做必须填写原因。', true);
     return;
   }
-  if(!confirm(`将从当前大步骤重做，可能额外消耗试剂和 DAB。原因：${reason}`)) return;
+  const decision = await operatorConfirm({
+    title:'确认大步骤重做',
+    message:`将从当前大步骤重做。原因：${reason}`,
+    warning:'该操作可能额外消耗试剂和 DAB，并会写入审计。',
+    confirmText:'确认重做',
+    danger:true
+  });
+  if(!decision.confirmed) return;
   await api(`/api/runs/${encodeURIComponent(run.id)}/redo-current-major-step`, {
     method:'POST',
     body: JSON.stringify({commandId: commandId('run-redo'), reason})
