@@ -111,3 +111,9 @@ data/backups/
 
 # Temp files
 *.tmp
+
+# Stainer validation artifacts
+work/verify-empty-sqlite-*/
+tmp-*.log
+coordinate-empty-*.db*
+data/communication-patch-migration.db*

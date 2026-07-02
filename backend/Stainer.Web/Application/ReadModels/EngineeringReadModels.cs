@@ -172,3 +172,96 @@ public sealed record LiquidClassVersionMutationResponse(
     string Status,
     bool IsReferenceable,
     string Message);
+
+public sealed record EngineeringSessionResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string SessionId,
+    string Status,
+    string UserId,
+    string Username,
+    string Reason,
+    string Target,
+    bool DangerousOperationConfirmed,
+    DateTimeOffset AuthenticatedAtUtc,
+    DateTimeOffset ExpiresAtUtc,
+    string Message);
+
+public sealed record EngineeringCommandLogResponse(
+    string DeviceCommandExecutionId,
+    string MachineRunId,
+    string? WorkflowStepExecutionId,
+    string CommandType,
+    string Status,
+    string PayloadJson,
+    string ResultJson,
+    string? LiquidClassVersionId,
+    int? LiquidClassVersionNo,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? CommandSentAtUtc,
+    DateTimeOffset? AcknowledgedAtUtc,
+    DateTimeOffset? CompletedAtUtc);
+
+public sealed record EngineeringErrorCodeResponse(
+    string SourceType,
+    string SourceId,
+    string Code,
+    string Status,
+    string Message,
+    string? ModuleCode,
+    string? MachineRunId,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record EngineeringMockCommunicationResponse(
+    string Id,
+    string DeviceMode,
+    string AdapterName,
+    string ModuleCode,
+    string Action,
+    string CommandId,
+    string? CorrelationId,
+    string? Actor,
+    string Source,
+    string Status,
+    bool Ok,
+    bool Acknowledged,
+    string? ErrorCode,
+    string Message,
+    string RequestJson,
+    string ResponseJson,
+    string PersistenceStatus,
+    string? PersistenceFailureReason,
+    int PersistenceAttemptCount,
+    DateTimeOffset PersistenceLastAttemptAtUtc,
+    DateTimeOffset? PersistenceCompletedAtUtc,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record EngineeringDeviceDiagnosticsResponse(
+    object Thermal,
+    object Fluidics,
+    IReadOnlyList<object> MotionModules,
+    DateTimeOffset GeneratedAtUtc);
+
+public sealed record EngineeringConfigExportResponse(
+    DateTimeOffset ExportedAtUtc,
+    IReadOnlyList<CoordinateProfileResponse> CoordinateProfiles,
+    IReadOnlyList<LiquidClassResponse> LiquidClasses);
+
+public sealed record EngineeringConfigImportPreviewResponse(
+    bool Ok,
+    string ConfigType,
+    string TargetCode,
+    string? SourceVersionId,
+    string VersionLabel,
+    bool HasChanges,
+    IReadOnlyList<EngineeringConfigDiffItemResponse> Differences,
+    IReadOnlyList<string> Errors);
+
+public sealed record EngineeringConfigDiffItemResponse(
+    string Path,
+    string? Before,
+    string? After,
+    string ChangeType);

@@ -197,7 +197,9 @@ public sealed record CalibrateCoordinatePointRequest(
     long? SafeZUm,
     long? AspirateZUm,
     long? DispenseZUm,
-    string Reason);
+    string Reason,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record CoordinateTargetPointInput(
     string PointCode,
@@ -220,16 +222,22 @@ public sealed record CreateCoordinateProfileVersionRequest(
     string VersionLabel,
     string Reason,
     IReadOnlyList<CoordinateTargetPointInput> TargetPoints,
-    string? ValidationResultJson = null);
+    string? ValidationResultJson = null,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record PublishCoordinateProfileVersionRequest(
     string CommandId,
     string Reason,
-    string ValidationResultJson);
+    string ValidationResultJson,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record ActivateCoordinateProfileVersionRequest(
     string CommandId,
-    string Reason);
+    string Reason,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record SaveLiquidClassRequest(
     string CommandId,
@@ -253,19 +261,27 @@ public sealed record SaveLiquidClassRequest(
     int? DispenseDelayMs = null,
     int? BlowoutVolumeUl = null,
     int? BlowoutDelayMs = null,
-    int? VolumeAdjustmentUl = null);
+    int? VolumeAdjustmentUl = null,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record PublishLiquidClassVersionRequest(
     string CommandId,
-    string Reason);
+    string Reason,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record EnableLiquidClassVersionRequest(
     string CommandId,
-    string Reason);
+    string Reason,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
 
 public sealed record SaveDeviceProfileRequest(
     string CommandId,
     string Code,
     string Name,
     bool IsActive,
-    string Reason);
+    string Reason,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);

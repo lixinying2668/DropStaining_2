@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Stainer.Web.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using Stainer.Web.Infrastructure.Data;
 namespace Stainer.Web.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(StainerDbContext))]
-    partial class StainerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260702060025_EngineeringBackendConfigManagement")]
+    partial class EngineeringBackendConfigManagement
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -1361,29 +1364,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("ok");
 
-                    b.Property<int>("PersistenceAttemptCount")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("persistence_attempt_count");
-
-                    b.Property<DateTimeOffset?>("PersistenceCompletedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("persistence_completed_at_utc");
-
-                    b.Property<string>("PersistenceFailureReason")
-                        .HasMaxLength(2000)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("persistence_failure_reason");
-
-                    b.Property<DateTimeOffset>("PersistenceLastAttemptAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("persistence_last_attempt_at_utc");
-
-                    b.Property<string>("PersistenceStatus")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("persistence_status");
-
                     b.Property<string>("RequestJson")
                         .IsRequired()
                         .HasMaxLength(16000)
@@ -1417,8 +1397,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                     b.HasIndex("CommandId");
 
                     b.HasIndex("CreatedAtUtc");
-
-                    b.HasIndex("PersistenceStatus", "CreatedAtUtc");
 
                     b.HasIndex("ModuleCode", "Status", "CreatedAtUtc");
 

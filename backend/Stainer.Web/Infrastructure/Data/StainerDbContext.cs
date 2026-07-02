@@ -10,6 +10,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<User> Users => Set<User>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<EngineeringSession> EngineeringSessions => Set<EngineeringSession>();
+    public DbSet<DeviceCommunicationRecord> DeviceCommunicationRecords => Set<DeviceCommunicationRecord>();
     public DbSet<Drawer> Drawers => Set<Drawer>();
     public DbSet<PhysicalSlot> PhysicalSlots => Set<PhysicalSlot>();
     public DbSet<ReagentRackPosition> ReagentRackPositions => Set<ReagentRackPosition>();
@@ -82,6 +84,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureUser(modelBuilder);
         ConfigureUserRole(modelBuilder);
         ConfigureAuditLog(modelBuilder);
+        ConfigureEngineeringSession(modelBuilder);
+        ConfigureDeviceCommunicationRecord(modelBuilder);
         ConfigureDrawer(modelBuilder);
         ConfigurePhysicalSlot(modelBuilder);
         ConfigureReagentRackPosition(modelBuilder);
@@ -685,6 +689,68 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Message).HasColumnName("message").HasMaxLength(2000).IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.HasOne(x => x.ActorUser).WithMany(x => x.AuditLogs).HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.SetNull);
+        entity.HasIndex(x => x.CreatedAtUtc);
+    }
+
+    private static void ConfigureEngineeringSession(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<EngineeringSession>();
+        entity.ToTable("engineering_sessions", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_engineering_sessions_status",
+                $"status in ('{EngineeringSessionStatus.Active}', '{EngineeringSessionStatus.Expired}', '{EngineeringSessionStatus.Revoked}')");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.UserId).HasColumnName("user_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.Username).HasColumnName("username").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.Target).HasColumnName("target").HasMaxLength(256).IsRequired();
+        entity.Property(x => x.DangerousOperationConfirmed).HasColumnName("dangerous_operation_confirmed").IsRequired();
+        entity.Property(x => x.AuthenticatedAtUtc).HasColumnName("authenticated_at_utc").IsRequired();
+        entity.Property(x => x.ExpiresAtUtc).HasColumnName("expires_at_utc").IsRequired();
+        entity.Property(x => x.RevokedAtUtc).HasColumnName("revoked_at_utc");
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.HasIndex(x => x.CommandId).IsUnique();
+        entity.HasIndex(x => new { x.UserId, x.Status, x.ExpiresAtUtc });
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureDeviceCommunicationRecord(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<DeviceCommunicationRecord>();
+        entity.ToTable("device_communication_records");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.DeviceMode).HasColumnName("device_mode").HasMaxLength(16).IsRequired();
+        entity.Property(x => x.AdapterName).HasColumnName("adapter_name").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.ModuleCode).HasColumnName("module_code").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Action).HasColumnName("action").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.CorrelationId).HasColumnName("correlation_id").HasMaxLength(128);
+        entity.Property(x => x.Actor).HasColumnName("actor").HasMaxLength(128);
+        entity.Property(x => x.Source).HasColumnName("source").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.Ok).HasColumnName("ok").IsRequired();
+        entity.Property(x => x.Acknowledged).HasColumnName("acknowledged").IsRequired();
+        entity.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(128);
+        entity.Property(x => x.Message).HasColumnName("message").HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.RequestJson).HasColumnName("request_json").HasMaxLength(16000).IsRequired();
+        entity.Property(x => x.ResponseJson).HasColumnName("response_json").HasMaxLength(16000).IsRequired();
+        entity.Property(x => x.PersistenceStatus).HasColumnName("persistence_status").HasMaxLength(16).IsRequired();
+        entity.Property(x => x.PersistenceFailureReason).HasColumnName("persistence_failure_reason").HasMaxLength(2000);
+        entity.Property(x => x.PersistenceAttemptCount).HasColumnName("persistence_attempt_count").IsRequired();
+        entity.Property(x => x.PersistenceLastAttemptAtUtc).HasColumnName("persistence_last_attempt_at_utc").IsRequired();
+        entity.Property(x => x.PersistenceCompletedAtUtc).HasColumnName("persistence_completed_at_utc");
+        entity.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc").IsRequired();
+        entity.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.HasIndex(x => x.CommandId);
+        entity.HasIndex(x => new { x.ModuleCode, x.Status, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.PersistenceStatus, x.CreatedAtUtc });
         entity.HasIndex(x => x.CreatedAtUtc);
     }
 

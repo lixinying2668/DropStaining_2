@@ -12,6 +12,7 @@ public sealed class SampleScanWriteService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
     IDeviceAdapter deviceAdapter,
+    DeviceCommunicationPersistenceService communicationPersistence,
     HospitalBarcodeNormalizer hospitalBarcodeNormalizer)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -65,18 +66,19 @@ public sealed class SampleScanWriteService(
                             cancellationToken);
                     }
 
-                    var deviceResult = await deviceAdapter.ScanSampleAsync(
-                        new DeviceOperationRequest(
-                            new DeviceCommandContext(request.CommandId, session.Id, actor.Username, "SampleScanWriteService"),
-                            DeviceModules.SampleScanner,
-                            "scan",
-                            new Dictionary<string, object?>
-                            {
-                                ["scenario"] = scenario,
-                                ["rawCode"] = plannedRaw,
-                                ["slotCode"] = slotCode
-                            }),
-                        cancellationToken);
+                    var operationRequest = new DeviceOperationRequest(
+                        new DeviceCommandContext(request.CommandId, session.Id, actor.Username, nameof(SampleScanWriteService)),
+                        DeviceModules.SampleScanner,
+                        "scan",
+                        new Dictionary<string, object?>
+                        {
+                            ["scenario"] = scenario,
+                            ["rawCode"] = plannedRaw,
+                            ["slotCode"] = slotCode
+                        });
+                    var communicationRecord = communicationPersistence.Begin(operationRequest);
+                    var deviceResult = await deviceAdapter.ScanSampleAsync(operationRequest, cancellationToken);
+                    communicationPersistence.Complete(communicationRecord, deviceResult);
 
                     var item = BuildItem(session, slotCode, scenario, plannedRaw, deviceResult);
                     session.Items.Add(item);

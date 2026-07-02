@@ -53,6 +53,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MockDemoDataSeeder>();
         services.AddScoped<DabLifecycleService>();
         services.AddScoped<CoordinateProfileLifecycleService>();
+        services.AddScoped<EngineeringSessionService>();
+        services.AddScoped<EngineeringDiagnosticService>();
+        services.AddScoped<DeviceCommunicationPersistenceService>();
+        services.AddScoped<EngineeringConfigService>();
         services.AddScoped<EngineeringWriteService>();
         services.AddScoped<LiquidClassSnapshotFactory>();
         services.AddScoped<PreflightValidationService>();

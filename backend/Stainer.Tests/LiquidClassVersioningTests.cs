@@ -310,6 +310,14 @@ public sealed class LiquidClassVersioningTests
     {
         var response = await client.PostAsJsonAsync("/api/login", new { username = "admin", password = "123456", role = "admin" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var engineeringSession = await client.PostAsJsonAsync("/api/engineering/session", new
+        {
+            commandId = $"cmd-liquid-engineering-session-{Guid.NewGuid():N}",
+            password = "123456",
+            reason = "liquid class versioning test",
+            target = "liquid-class"
+        });
+        Assert.Equal(HttpStatusCode.OK, engineeringSession.StatusCode);
     }
 
     private static async Task<T> PostAsync<T>(HttpClient client, string url, object request)

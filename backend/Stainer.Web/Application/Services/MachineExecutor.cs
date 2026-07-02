@@ -70,7 +70,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 var dabLifecycleService = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
                 var fluidicsControlService = scope.ServiceProvider.GetRequiredService<FluidicsControlService>();
                 var motionControlService = scope.ServiceProvider.GetRequiredService<MotionControlService>();
-                await ProcessCommandAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, command, stoppingToken);
+                var communicationPersistence = scope.ServiceProvider.GetRequiredService<DeviceCommunicationPersistenceService>();
+                await ProcessCommandAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, communicationPersistence, command, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -128,6 +129,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         DabLifecycleService dabLifecycleService,
         FluidicsControlService fluidicsControlService,
         MotionControlService motionControlService,
+        DeviceCommunicationPersistenceService communicationPersistence,
         MachineExecutorCommand command,
         CancellationToken cancellationToken)
     {
@@ -135,11 +137,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         {
             case MachineExecutorCommandType.Start:
             case MachineExecutorCommandType.Resume:
-                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, communicationPersistence, command.RunId, cancellationToken);
                 break;
             case MachineExecutorCommandType.Redo:
                 await RedoCurrentMajorStepAsync(dbContext, command.RunId, command.Payload ?? "Redo requested.", cancellationToken);
-                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, communicationPersistence, command.RunId, cancellationToken);
                 break;
         }
     }
@@ -149,6 +151,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         DabLifecycleService dabLifecycleService,
         FluidicsControlService fluidicsControlService,
         MotionControlService motionControlService,
+        DeviceCommunicationPersistenceService communicationPersistence,
         string runId,
         CancellationToken cancellationToken)
     {
@@ -232,7 +235,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 return;
             }
 
-            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, run, step, cancellationToken);
+            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, communicationPersistence, run, step, cancellationToken);
             if (!stepCompleted)
             {
                 return;
@@ -265,6 +268,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         DabLifecycleService dabLifecycleService,
         FluidicsControlService fluidicsControlService,
         MotionControlService motionControlService,
+        DeviceCommunicationPersistenceService communicationPersistence,
         MachineRun run,
         WorkflowStepExecution step,
         CancellationToken cancellationToken)
@@ -340,9 +344,12 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
 
         command.Status = DeviceCommandStatus.CommandSent;
         command.CommandSentAtUtc = DateTimeOffset.UtcNow;
+        var operationRequest = BuildDeviceOperationRequest(run, step, command);
+        var communicationRecord = communicationPersistence.Begin(operationRequest);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var deviceResult = await ExecuteDeviceActionAsync(run, step, command, cancellationToken);
+        var deviceResult = await ExecuteDeviceActionAsync(step, operationRequest, cancellationToken);
+        await communicationPersistence.TryPersistCompletionAsync(communicationRecord, deviceResult, cancellationToken);
         if (deviceResult.Acknowledged)
         {
             command.Status = DeviceCommandStatus.DeviceAcknowledged;
@@ -473,14 +480,13 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         return true;
     }
 
-    private async Task<DeviceCommandResult> ExecuteDeviceActionAsync(
+    private static DeviceOperationRequest BuildDeviceOperationRequest(
         MachineRun run,
         WorkflowStepExecution step,
-        DeviceCommandExecution command,
-        CancellationToken cancellationToken)
+        DeviceCommandExecution command)
     {
         var moduleCode = ResolveDeviceModule(step);
-        var request = new DeviceOperationRequest(
+        return new DeviceOperationRequest(
             new DeviceCommandContext(command.Id, command.Id, "system", nameof(MachineExecutor)),
             moduleCode,
             step.ActionType,
@@ -515,6 +521,13 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 ["allowAutomaticWash"] = true,
                 ["roundKey"] = $"{command.MachineRunId}:{step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode}:{step.MajorStepCode}"
             });
+    }
+
+    private async Task<DeviceCommandResult> ExecuteDeviceActionAsync(
+        WorkflowStepExecution step,
+        DeviceOperationRequest request,
+        CancellationToken cancellationToken)
+    {
         try
         {
             if (IsDabStep(step))
@@ -561,7 +574,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             return new DeviceCommandResult(
                 false,
                 DeviceCommandStatuses.Failed,
-                moduleCode,
+                request.ModuleCode,
                 step.ActionType,
                 ex.Code,
                 ex.Message,

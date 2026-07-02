@@ -1401,6 +1401,8 @@ public sealed class BusinessWriteApiIntegrationTests
         Assert.Equal(1, scan.InvalidCount);
         Assert.Equal(38, scan.EmptyCount);
 
+        await OpenEngineeringSessionAsync(client, "business-write");
+
         var calibration = await PostJsonAsync<EngineeringWriteResponse>(client, "/api/engineering/coordinate-points/calibrate", new
         {
             commandId = "cmd-coordinate-calibrate-001",
@@ -1495,6 +1497,18 @@ public sealed class BusinessWriteApiIntegrationTests
             username,
             password = "123456",
             role
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static async Task OpenEngineeringSessionAsync(HttpClient client, string suffix)
+    {
+        var response = await client.PostAsJsonAsync("/api/engineering/session", new
+        {
+            commandId = $"cmd-business-engineering-session-{suffix}",
+            password = "123456",
+            reason = $"business write engineering test {suffix}",
+            target = "business-write"
         });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }

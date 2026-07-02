@@ -25,11 +25,11 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
         return stateStore.Snapshot();
     }
 
-    public Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    public async Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
     {
         var snapshot = stateStore.Snapshot();
         var now = DateTimeOffset.UtcNow;
-        return Task.FromResult(new DeviceCommandResult(
+        return await Task.FromResult(new DeviceCommandResult(
             snapshot.Ready,
             snapshot.Ready ? DeviceCommandStatuses.Succeeded : DeviceCommandStatuses.Failed,
             request.ModuleCode,
@@ -42,7 +42,10 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
             new Dictionary<string, object?> { ["ready"] = snapshot.Ready, ["version"] = snapshot.Version }));
     }
 
-    public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        InitializeModuleCoreAsync(request, cancellationToken);
+
+    private Task<DeviceCommandResult> InitializeModuleCoreAsync(DeviceOperationRequest request, CancellationToken cancellationToken)
     {
         if (request.ModuleCode is DeviceModules.Temperature or DeviceModules.Cooling)
         {
@@ -151,7 +154,8 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
             }
         }, cancellationToken);
 
-    public Task<DeviceCommandResult> ExecuteWorkflowActionAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
+    public Task<DeviceCommandResult> ExecuteWorkflowActionAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(request, null, cancellationToken);
 
     public Task<DeviceFaultControlResult> ConfigureFaultAsync(DeviceFaultCommand command, CancellationToken cancellationToken = default)
     {

@@ -15,6 +15,7 @@ public sealed class DeviceInitializationService(
     CommandIdempotencyService idempotencyService,
     IRuntimeEventPublisher eventPublisher,
     SafetyLogWriter safetyLogWriter,
+    DeviceCommunicationPersistenceService communicationPersistence,
     ThermalControlService thermalControlService,
     FluidicsControlService fluidicsControlService,
     MotionControlService motionControlService)
@@ -195,6 +196,12 @@ public sealed class DeviceInitializationService(
                             parameters["motionStateValidated"] = motionResult.Ok;
                         }
 
+                        var operationRequest = new DeviceOperationRequest(
+                            new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
+                            check.ModuleCode,
+                            step.Action,
+                            parameters);
+                        var communicationRecord = communicationPersistence.Begin(operationRequest);
                         var result = thermalResult is { Ok: false }
                             ? new DeviceCommandResult(
                                 false,
@@ -231,13 +238,8 @@ public sealed class DeviceInitializationService(
                                 DateTimeOffset.UtcNow,
                                 motionResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
                                 motionResult.Data)
-                            : await deviceAdapter.InitializeModuleAsync(
-                                new DeviceOperationRequest(
-                                    new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
-                                    check.ModuleCode,
-                                    step.Action,
-                                    parameters),
-                                cancellationToken);
+                            : await deviceAdapter.InitializeModuleAsync(operationRequest, cancellationToken);
+                        communicationPersistence.Complete(communicationRecord, result);
                         check.Status = MapCheckStatus(result.Status);
                         check.ErrorCode = result.ErrorCode;
                         check.Message = result.Message;

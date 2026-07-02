@@ -11,6 +11,7 @@ namespace Stainer.Web.Application.Services;
 public sealed class ReagentScannerMockService(
     StainerDbContext dbContext,
     IDeviceAdapter deviceAdapter,
+    DeviceCommunicationPersistenceService communicationPersistence,
     ReagentScanWriteService scanWriteService)
 {
     public async Task<MockReagentScanResponse> ScanAsync(
@@ -62,18 +63,20 @@ public sealed class ReagentScannerMockService(
                     cancellationToken);
             }
 
-            var deviceResult = await deviceAdapter.ScanReagentAsync(
-                new DeviceOperationRequest(
-                    new DeviceCommandContext(request.CommandId, sessionId, actor.Username, "ReagentScannerMockService"),
-                    DeviceModules.ReagentScanner,
-                    "scan",
-                    new Dictionary<string, object?>
-                    {
-                        ["position"] = position.Code,
-                        ["scenario"] = scenario,
-                        ["rawBarcode"] = rawBarcode
-                    }),
-                cancellationToken);
+            var operationRequest = new DeviceOperationRequest(
+                new DeviceCommandContext(request.CommandId, sessionId, actor.Username, nameof(ReagentScannerMockService)),
+                DeviceModules.ReagentScanner,
+                "scan",
+                new Dictionary<string, object?>
+                {
+                    ["position"] = position.Code,
+                    ["scenario"] = scenario,
+                    ["rawBarcode"] = rawBarcode
+                });
+            var communicationRecord = communicationPersistence.Begin(operationRequest);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            var deviceResult = await deviceAdapter.ScanReagentAsync(operationRequest, cancellationToken);
+            await communicationPersistence.TryPersistCompletionAsync(communicationRecord, deviceResult, cancellationToken);
 
             var (scanResult, errorReason) = ToScanResult(scenario, deviceResult);
             var response = await scanWriteService.ConfirmScanAsync(

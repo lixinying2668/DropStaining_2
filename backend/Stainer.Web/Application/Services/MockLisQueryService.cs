@@ -12,6 +12,7 @@ public sealed class MockLisQueryService(
     CommandIdempotencyService idempotencyService,
     HospitalBarcodeNormalizer normalizer,
     IDeviceAdapter deviceAdapter,
+    DeviceCommunicationPersistenceService communicationPersistence,
     IMockLisAdapter lisAdapter)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -42,13 +43,14 @@ public sealed class MockLisQueryService(
                 };
                 dbContext.LisQueryLogs.Add(log);
 
-                var deviceResult = await deviceAdapter.QueryLisAsync(
-                    new DeviceOperationRequest(
-                        new DeviceCommandContext(request.CommandId, null, actor.Username, "MockLisQueryService"),
-                        DeviceModules.Lis,
-                        "query",
-                        new Dictionary<string, object?> { ["normalizedCode"] = normalizedCode }),
-                    cancellationToken);
+                var operationRequest = new DeviceOperationRequest(
+                    new DeviceCommandContext(request.CommandId, null, actor.Username, nameof(MockLisQueryService)),
+                    DeviceModules.Lis,
+                    "query",
+                    new Dictionary<string, object?> { ["normalizedCode"] = normalizedCode });
+                var communicationRecord = communicationPersistence.Begin(operationRequest);
+                var deviceResult = await deviceAdapter.QueryLisAsync(operationRequest, cancellationToken);
+                communicationPersistence.Complete(communicationRecord, deviceResult);
 
                 if (!deviceResult.Ok)
                 {

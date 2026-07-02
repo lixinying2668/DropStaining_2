@@ -20,6 +20,7 @@ public sealed class CoordinateProfileVersioningTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "admin", "admin");
+        await OpenEngineeringSessionAsync(client, "coordinate-versioning-main");
 
         var profiles = await client.GetFromJsonAsync<List<CoordinateProfileResponse>>("/api/engineering/coordinate-profiles");
         var profile = Assert.Single(profiles!, x => x.Code == ReferenceDataSeeder.DefaultCoordinateProfileCode);
@@ -159,6 +160,7 @@ public sealed class CoordinateProfileVersioningTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "admin", "admin");
+        await OpenEngineeringSessionAsync(client, "coordinate-versioning-freeze");
 
         var profiles = await client.GetFromJsonAsync<List<CoordinateProfileResponse>>("/api/engineering/coordinate-profiles");
         var originalVersionId = Assert.Single(profiles!, x => x.Code == ReferenceDataSeeder.DefaultCoordinateProfileCode).ActiveVersionId!;
@@ -303,6 +305,18 @@ public sealed class CoordinateProfileVersioningTests
             username,
             password = "123456",
             role
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static async Task OpenEngineeringSessionAsync(HttpClient client, string suffix)
+    {
+        var response = await client.PostAsJsonAsync("/api/engineering/session", new
+        {
+            commandId = $"cmd-engineering-session-{suffix}",
+            password = "123456",
+            reason = $"coordinate test {suffix}",
+            target = "coordinate-profile"
         });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
