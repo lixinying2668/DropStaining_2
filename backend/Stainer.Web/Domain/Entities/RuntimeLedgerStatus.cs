@@ -38,6 +38,7 @@ public static class DeviceCommandStatus
 {
     public const string Planned = "Planned";
     public const string CommandSent = "CommandSent";
+    public const string DeviceAcknowledged = "DeviceAcknowledged";
     public const string Acknowledged = "Acknowledged";
     public const string Completed = "Completed";
     public const string Failed = "Failed";

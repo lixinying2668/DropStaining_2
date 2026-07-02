@@ -16,7 +16,8 @@ public sealed class DeviceInitializationService(
     IRuntimeEventPublisher eventPublisher,
     SafetyLogWriter safetyLogWriter,
     ThermalControlService thermalControlService,
-    FluidicsControlService fluidicsControlService)
+    FluidicsControlService fluidicsControlService,
+    MotionControlService motionControlService)
 {
     private static readonly SemaphoreSlim InitializationGate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -28,6 +29,8 @@ public sealed class DeviceInitializationService(
         (DeviceModules.SampleScanner, "check-connection"),
         (DeviceModules.ReagentScanner, "check-connection"),
         (DeviceModules.RobotArm, "home"),
+        (DeviceModules.Needles, "check-empty"),
+        (DeviceModules.Pipette, "check-pipette"),
         (DeviceModules.Pump, "check-pwm-channels"),
         (DeviceModules.Mixer, "check-mixer-channels"),
         (DeviceModules.LiquidLevel, "read-levels"),
@@ -109,6 +112,7 @@ public sealed class DeviceInitializationService(
 
         await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
         await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
+        await motionControlService.EnsureReadyForRunAsync(cancellationToken);
     }
 
     private async Task<DeviceInitializationResponse> ExecuteSerializedAsync(
@@ -180,6 +184,16 @@ public sealed class DeviceInitializationService(
                             }
                             parameters["fluidicsStateValidated"] = fluidicsResult.Ok;
                         }
+                        MotionDeviceResult? motionResult = null;
+                        if (check.ModuleCode is DeviceModules.RobotArm or DeviceModules.Needles or DeviceModules.Pipette or DeviceModules.NeedleWash)
+                        {
+                            motionResult = await motionControlService.InitializeModuleAsync(check.ModuleCode, cancellationToken);
+                            foreach (var pair in motionResult.Data)
+                            {
+                                parameters[pair.Key] = pair.Value;
+                            }
+                            parameters["motionStateValidated"] = motionResult.Ok;
+                        }
 
                         var result = thermalResult is { Ok: false }
                             ? new DeviceCommandResult(
@@ -205,6 +219,18 @@ public sealed class DeviceInitializationService(
                                 DateTimeOffset.UtcNow,
                                 fluidicsResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
                                 fluidicsResult.Data)
+                            : motionResult is { Ok: false }
+                            ? new DeviceCommandResult(
+                                false,
+                                motionResult.Status,
+                                check.ModuleCode,
+                                step.Action,
+                                motionResult.ErrorCode,
+                                motionResult.Message,
+                                check.StartedAtUtc.Value,
+                                DateTimeOffset.UtcNow,
+                                motionResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+                                motionResult.Data)
                             : await deviceAdapter.InitializeModuleAsync(
                                 new DeviceOperationRequest(
                                     new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),

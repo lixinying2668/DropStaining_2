@@ -69,7 +69,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
                 var dabLifecycleService = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
                 var fluidicsControlService = scope.ServiceProvider.GetRequiredService<FluidicsControlService>();
-                await ProcessCommandAsync(dbContext, dabLifecycleService, fluidicsControlService, command, stoppingToken);
+                var motionControlService = scope.ServiceProvider.GetRequiredService<MotionControlService>();
+                await ProcessCommandAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, command, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -126,6 +127,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
         FluidicsControlService fluidicsControlService,
+        MotionControlService motionControlService,
         MachineExecutorCommand command,
         CancellationToken cancellationToken)
     {
@@ -133,11 +135,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         {
             case MachineExecutorCommandType.Start:
             case MachineExecutorCommandType.Resume:
-                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, command.RunId, cancellationToken);
                 break;
             case MachineExecutorCommandType.Redo:
                 await RedoCurrentMajorStepAsync(dbContext, command.RunId, command.Payload ?? "Redo requested.", cancellationToken);
-                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, command.RunId, cancellationToken);
                 break;
         }
     }
@@ -146,6 +148,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
         FluidicsControlService fluidicsControlService,
+        MotionControlService motionControlService,
         string runId,
         CancellationToken cancellationToken)
     {
@@ -229,7 +232,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 return;
             }
 
-            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, fluidicsControlService, run, step, cancellationToken);
+            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, fluidicsControlService, motionControlService, run, step, cancellationToken);
             if (!stepCompleted)
             {
                 return;
@@ -261,6 +264,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
         FluidicsControlService fluidicsControlService,
+        MotionControlService motionControlService,
         MachineRun run,
         WorkflowStepExecution step,
         CancellationToken cancellationToken)
@@ -321,14 +325,27 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         PublishSlideTaskState(run.Id, step.WorkflowExecution.SlideTask, step.StepName);
         PublishWorkflowStep(run.Id, step, MachineEventTypes.WorkflowStepStarted);
 
+        var leaseResult = await TryAcquireResourcesAsync(dbContext, run, step, command, cancellationToken);
+        if (!leaseResult.Ok)
+        {
+            command.Status = DeviceCommandStatus.Failed;
+            command.CompletedAtUtc = DateTimeOffset.UtcNow;
+            command.ResultJson = JsonSerializer.Serialize(new { ok = false, errorCode = leaseResult.ErrorCode, message = leaseResult.Message });
+            step.Status = RuntimeLedgerStatus.Failed;
+            step.CompletedAtUtc = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await FaultRunAsync(dbContext, run.Id, step.Id, leaseResult.Message, cancellationToken, leaseResult.ErrorCode ?? "resource_waiting", markUnknown: false);
+            return false;
+        }
+
         command.Status = DeviceCommandStatus.CommandSent;
         command.CommandSentAtUtc = DateTimeOffset.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var deviceResult = await ExecuteDeviceActionAsync(step, command, cancellationToken);
+        var deviceResult = await ExecuteDeviceActionAsync(run, step, command, cancellationToken);
         if (deviceResult.Acknowledged)
         {
-            command.Status = DeviceCommandStatus.Acknowledged;
+            command.Status = DeviceCommandStatus.DeviceAcknowledged;
             command.AcknowledgedAtUtc = DateTimeOffset.UtcNow;
             await dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -338,10 +355,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 && deviceResult.Data.TryGetValue("faultType", out var faultType)
                 && string.Equals(Convert.ToString(faultType), DeviceFaultTypes.Disconnect, StringComparison.OrdinalIgnoreCase));
         await RecordFluidicsDeviceFailureIfNeededAsync(fluidicsControlService, run, step, command, deviceResult, cancellationToken);
+        await RecordMotionDeviceFailureIfNeededAsync(motionControlService, run, step, command, deviceResult, cancellationToken);
         var businessOk = false;
         if (deviceResult.Ok)
         {
-            businessOk = await ApplyBusinessEffectsAsync(dbContext, dabLifecycleService, run, step, command, deviceResult, cancellationToken);
+            businessOk = await ApplyBusinessEffectsAsync(dbContext, dabLifecycleService, motionControlService, run, step, command, deviceResult, cancellationToken);
         }
         else if (IsDabStep(step))
         {
@@ -383,6 +401,14 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             ? RuntimeLedgerStatus.Completed
             : deviceOutcomeUnknown ? RuntimeLedgerStatus.Unknown : RuntimeLedgerStatus.Failed;
         step.CompletedAtUtc = DateTimeOffset.UtcNow;
+        if (command.Status == DeviceCommandStatus.Unknown)
+        {
+            MarkResourcesUnknown(dbContext, command.Id, deviceResult.Message);
+        }
+        else
+        {
+            ReleaseResources(dbContext, command.Id);
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         PublishWorkflowStep(run.Id, step, MachineEventTypes.WorkflowStepCompleted);
         PublishSlideTaskState(run.Id, step.WorkflowExecution.SlideTask, step.StepName);
@@ -406,6 +432,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     private async Task<bool> ApplyBusinessEffectsAsync(
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
+        MotionControlService motionControlService,
         MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
@@ -414,7 +441,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     {
         if (IsDabStep(step))
         {
-            return await ApplyDabAsync(dbContext, dabLifecycleService, run, step, command, deviceResult, cancellationToken);
+            return await ApplyDabAsync(dbContext, dabLifecycleService, motionControlService, run, step, command, deviceResult, cancellationToken);
         }
 
         if (IsTemperatureStep(step))
@@ -446,7 +473,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         return true;
     }
 
-    private Task<DeviceCommandResult> ExecuteDeviceActionAsync(
+    private async Task<DeviceCommandResult> ExecuteDeviceActionAsync(
+        MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
         CancellationToken cancellationToken)
@@ -472,51 +500,76 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 ["liquidClassParametersJson"] = command.LiquidClassParametersJson,
                 ["drawerCode"] = step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode,
                 ["slotNo"] = ParseSlotNo(step.WorkflowExecution?.SlideTask?.SlotCode),
+                ["slotCode"] = step.WorkflowExecution?.SlideTask?.SlotCode,
+                ["stainingTaskId"] = step.WorkflowExecution?.SlideTask?.StainingTaskId,
                 ["targetTemperatureDeciC"] = step.TargetTemperatureDeciC ?? 420,
                 ["pwmChannelCode"] = DrawerToPwm(step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode),
                 ["speedPercent"] = DefaultPumpSpeed(step.ActionType),
                 ["durationMs"] = 25,
-                ["targetPointCode"] = ResolveWashTargetPoint(step.ActionType),
+                ["targetPointCode"] = ResolveTargetPoint(step),
+                ["coordinateProfileVersionId"] = run.CoordinateProfileVersionId ?? step.WorkflowExecution?.SlideTask?.ChannelBatch?.CoordinateProfileVersionId,
+                ["coordinateSnapshotJson"] = string.IsNullOrWhiteSpace(run.CoordinateSnapshotJson) || run.CoordinateSnapshotJson == "{}"
+                    ? step.WorkflowExecution?.SlideTask?.ChannelBatch?.CoordinateSnapshotJson
+                    : run.CoordinateSnapshotJson,
+                ["needleCode"] = PreferredNeedleForSlot(step),
+                ["allowAutomaticWash"] = true,
                 ["roundKey"] = $"{command.MachineRunId}:{step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode}:{step.MajorStepCode}"
             });
-
-        if (IsDabStep(step))
+        try
         {
-            return deviceAdapter.PrepareDabAsync(request, cancellationToken);
-        }
+            if (IsDabStep(step))
+            {
+                return await deviceAdapter.PrepareDabAsync(request, cancellationToken);
+            }
 
-        if (IsTemperatureStep(step))
+            if (IsTemperatureStep(step))
+            {
+                return await deviceAdapter.SetTemperatureAsync(request, cancellationToken);
+            }
+
+            var action = step.ActionType.ToLowerInvariant();
+            if (action.Contains("level"))
+            {
+                return await deviceAdapter.ReadLiquidLevelsAsync(request, cancellationToken);
+            }
+
+            if (action.Contains("needle") && action.Contains("wash"))
+            {
+                return await deviceAdapter.WashNeedlesAsync(request, cancellationToken);
+            }
+
+            if (action.Contains("wash"))
+            {
+                return await deviceAdapter.RunPumpAsync(request, cancellationToken);
+            }
+
+            if (action.Contains("mix"))
+            {
+                return await deviceAdapter.MixAsync(request, cancellationToken);
+            }
+
+            if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
+            {
+                return await deviceAdapter.PipetteAsync(request, cancellationToken);
+            }
+
+            return await deviceAdapter.ExecuteWorkflowActionAsync(request, cancellationToken);
+        }
+        catch (BusinessRuleException ex)
         {
-            return deviceAdapter.SetTemperatureAsync(request, cancellationToken);
+            var now = DateTimeOffset.UtcNow;
+            return new DeviceCommandResult(
+                false,
+                DeviceCommandStatuses.Failed,
+                moduleCode,
+                step.ActionType,
+                ex.Code,
+                ex.Message,
+                now,
+                now,
+                true,
+                new Dictionary<string, object?> { ["businessRule"] = ex.Code });
         }
-
-        var action = step.ActionType.ToLowerInvariant();
-        if (action.Contains("level"))
-        {
-            return deviceAdapter.ReadLiquidLevelsAsync(request, cancellationToken);
-        }
-
-        if (action.Contains("needle") && action.Contains("wash"))
-        {
-            return deviceAdapter.WashNeedlesAsync(request, cancellationToken);
-        }
-
-        if (action.Contains("wash"))
-        {
-            return deviceAdapter.RunPumpAsync(request, cancellationToken);
-        }
-
-        if (action.Contains("mix"))
-        {
-            return deviceAdapter.MixAsync(request, cancellationToken);
-        }
-
-        if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
-        {
-            return deviceAdapter.PipetteAsync(request, cancellationToken);
-        }
-
-        return deviceAdapter.ExecuteWorkflowActionAsync(request, cancellationToken);
     }
 
     private static async Task RecordFluidicsDeviceFailureIfNeededAsync(
@@ -553,6 +606,212 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             cancellationToken);
     }
 
+    private static async Task RecordMotionDeviceFailureIfNeededAsync(
+        MotionControlService motionControlService,
+        MachineRun run,
+        WorkflowStepExecution step,
+        DeviceCommandExecution command,
+        DeviceCommandResult deviceResult,
+        CancellationToken cancellationToken)
+    {
+        if (deviceResult.Ok)
+        {
+            return;
+        }
+
+        var moduleCode = ResolveDeviceModule(step);
+        if (!IsMotionModule(moduleCode) || !ShouldRecordMotionDeviceFailure(deviceResult))
+        {
+            return;
+        }
+
+        await motionControlService.RecordDeviceFailureFromExecutorAsync(
+            moduleCode,
+            deviceResult.Status,
+            deviceResult.ErrorCode,
+            deviceResult.Message,
+            PreferredNeedleForSlot(step),
+            run.Id,
+            step.Id,
+            command.Id,
+            cancellationToken);
+    }
+
+    private async Task<ResourceLeaseResult> TryAcquireResourcesAsync(
+        StainerDbContext dbContext,
+        MachineRun run,
+        WorkflowStepExecution step,
+        DeviceCommandExecution command,
+        CancellationToken cancellationToken)
+    {
+        var resources = ResolveRequiredResources(step)
+            .GroupBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .ToList();
+        if (resources.Count == 0)
+        {
+            return ResourceLeaseResult.Succeeded();
+        }
+
+        foreach (var resource in resources)
+        {
+            var existing = await dbContext.MachineResourceLeases
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.ResourceCode == resource.Code && x.Status == MachineResourceLeaseStatus.Acquired, cancellationToken);
+            if (existing is not null && existing.DeviceCommandExecutionId != command.Id)
+            {
+                var reason = $"Resource {resource.Code} is held by command {existing.DeviceCommandExecutionId}.";
+                dbContext.MachineResourceLeases.Add(new MachineResourceLease
+                {
+                    ResourceCode = resource.Code,
+                    ResourceType = resource.Type,
+                    Status = MachineResourceLeaseStatus.Waiting,
+                    MachineRunId = run.Id,
+                    WorkflowStepExecutionId = step.Id,
+                    DeviceCommandExecutionId = command.Id,
+                    CommandType = command.CommandType,
+                    WaitReason = reason,
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                });
+                dbContext.AuditLogs.Add(new AuditLog
+                {
+                    Action = "resource.waiting",
+                    EntityType = "MachineResourceLease",
+                    EntityId = command.Id,
+                    Message = JsonSerializer.Serialize(new { runId = run.Id, stepId = step.Id, commandId = command.Id, resource.Code, resource.Type, reason }),
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                });
+                await dbContext.SaveChangesAsync(cancellationToken);
+                return ResourceLeaseResult.Failed("resource_waiting", reason);
+            }
+        }
+
+        foreach (var resource in resources)
+        {
+            var alreadyHeld = await dbContext.MachineResourceLeases
+                .AnyAsync(x => x.ResourceCode == resource.Code && x.Status == MachineResourceLeaseStatus.Acquired && x.DeviceCommandExecutionId == command.Id, cancellationToken);
+            if (alreadyHeld)
+            {
+                continue;
+            }
+
+            dbContext.MachineResourceLeases.Add(new MachineResourceLease
+            {
+                ResourceCode = resource.Code,
+                ResourceType = resource.Type,
+                Status = MachineResourceLeaseStatus.Acquired,
+                MachineRunId = run.Id,
+                WorkflowStepExecutionId = step.Id,
+                DeviceCommandExecutionId = command.Id,
+                CommandType = command.CommandType,
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                AcquiredAtUtc = DateTimeOffset.UtcNow
+            });
+        }
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            Action = "resource.acquired",
+            EntityType = "DeviceCommandExecution",
+            EntityId = command.Id,
+            Message = JsonSerializer.Serialize(new { runId = run.Id, stepId = step.Id, commandId = command.Id, resources = resources.Select(x => x.Code).ToArray() }),
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return ResourceLeaseResult.Succeeded();
+    }
+
+    private static void ReleaseResources(StainerDbContext dbContext, string commandId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var leases = dbContext.MachineResourceLeases.Local
+            .Where(x => x.DeviceCommandExecutionId == commandId && x.Status == MachineResourceLeaseStatus.Acquired)
+            .ToList();
+        foreach (var lease in leases)
+        {
+            lease.Status = MachineResourceLeaseStatus.Released;
+            lease.ReleasedAtUtc = now;
+        }
+
+        if (leases.Count > 0)
+        {
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                Action = "resource.released",
+                EntityType = "DeviceCommandExecution",
+                EntityId = commandId,
+                Message = JsonSerializer.Serialize(new { commandId, resources = leases.Select(x => x.ResourceCode).ToArray() }),
+                CreatedAtUtc = now
+            });
+        }
+    }
+
+    private static void MarkResourcesUnknown(StainerDbContext dbContext, string commandId, string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var leases = dbContext.MachineResourceLeases.Local
+            .Where(x => x.DeviceCommandExecutionId == commandId && x.Status == MachineResourceLeaseStatus.Acquired)
+            .ToList();
+        foreach (var lease in leases)
+        {
+            lease.Status = MachineResourceLeaseStatus.NeedsManualResolution;
+            lease.WaitReason = reason;
+        }
+
+        if (leases.Count > 0)
+        {
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                Action = "resource.needs_manual_resolution",
+                EntityType = "DeviceCommandExecution",
+                EntityId = commandId,
+                Message = JsonSerializer.Serialize(new { commandId, resources = leases.Select(x => x.ResourceCode).ToArray(), reason }),
+                CreatedAtUtc = now
+            });
+        }
+    }
+
+    private static IReadOnlyList<ResourceRequest> ResolveRequiredResources(WorkflowStepExecution step)
+    {
+        var moduleCode = ResolveDeviceModule(step);
+        var resources = new List<ResourceRequest>();
+        if (moduleCode is DeviceModules.RobotArm or DeviceModules.Pipette or DeviceModules.NeedleWash or DeviceModules.Dab)
+        {
+            resources.Add(new ResourceRequest(MachineResourceTypes.Platform, "Platform:RobotArm"));
+        }
+
+        if (moduleCode == DeviceModules.Pipette)
+        {
+            var needle = PreferredNeedleForSlot(step) ?? NeedleCodes.Needle1;
+            resources.Add(new ResourceRequest(MachineResourceTypes.Needle, $"Needle:{needle}"));
+            resources.Add(new ResourceRequest(MachineResourceTypes.WashStation, "WashStation:NeedleWash"));
+            if (!string.IsNullOrWhiteSpace(step.ReagentCode))
+            {
+                resources.Add(new ResourceRequest(MachineResourceTypes.Source, $"Source:{step.ReagentCode.Trim().ToUpperInvariant()}"));
+            }
+        }
+        else if (moduleCode == DeviceModules.NeedleWash)
+        {
+            resources.Add(new ResourceRequest(MachineResourceTypes.WashStation, "WashStation:NeedleWash"));
+            resources.Add(new ResourceRequest(MachineResourceTypes.Needle, $"Needle:{NeedleCodes.Needle1}"));
+            resources.Add(new ResourceRequest(MachineResourceTypes.Needle, $"Needle:{NeedleCodes.Needle2}"));
+        }
+        else if (moduleCode == DeviceModules.Pump)
+        {
+            resources.Add(new ResourceRequest(MachineResourceTypes.Pump, $"Pump:{DrawerToPwm(step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode) ?? "Any"}"));
+        }
+        else if (moduleCode == DeviceModules.Mixer)
+        {
+            resources.Add(new ResourceRequest(MachineResourceTypes.Mixer, $"Mixer:{step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode ?? "Any"}"));
+        }
+        else if (moduleCode == DeviceModules.Dab)
+        {
+            resources.Add(new ResourceRequest(MachineResourceTypes.DabPosition, "DabPosition:DAB"));
+        }
+
+        return resources;
+    }
+
     private static string ResolveDeviceModule(WorkflowStepExecution step)
     {
         if (IsDabStep(step)) return DeviceModules.Dab;
@@ -571,9 +830,20 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         || string.Equals(moduleCode, DeviceModules.Mixer, StringComparison.Ordinal)
         || string.Equals(moduleCode, DeviceModules.LiquidLevel, StringComparison.Ordinal);
 
+    private static bool IsMotionModule(string moduleCode) =>
+        string.Equals(moduleCode, DeviceModules.RobotArm, StringComparison.Ordinal)
+        || string.Equals(moduleCode, DeviceModules.Needles, StringComparison.Ordinal)
+        || string.Equals(moduleCode, DeviceModules.Pipette, StringComparison.Ordinal)
+        || string.Equals(moduleCode, DeviceModules.NeedleWash, StringComparison.Ordinal);
+
     private static bool ShouldRecordFluidicsDeviceFailure(DeviceCommandResult deviceResult) =>
         deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut
         || deviceResult.Data.ContainsKey("faultPlanId");
+
+    private static bool ShouldRecordMotionDeviceFailure(DeviceCommandResult deviceResult) =>
+        deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut
+        || deviceResult.Data.ContainsKey("faultPlanId")
+        || !string.IsNullOrWhiteSpace(deviceResult.ErrorCode);
 
     private static string? ResolveLiquidSourceType(DeviceCommandResult deviceResult)
     {
@@ -692,6 +962,33 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         return null;
     }
 
+    private static string? ResolveTargetPoint(WorkflowStepExecution step)
+    {
+        var washTarget = ResolveWashTargetPoint(step.ActionType);
+        if (!string.IsNullOrWhiteSpace(washTarget))
+        {
+            return washTarget;
+        }
+
+        if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
+        {
+            return step.WorkflowExecution?.SlideTask?.SlotCode;
+        }
+
+        return null;
+    }
+
+    private static string? PreferredNeedleForSlot(WorkflowStepExecution step)
+    {
+        var slotNo = ParseSlotNo(step.WorkflowExecution?.SlideTask?.SlotCode);
+        if (slotNo <= 0)
+        {
+            return null;
+        }
+
+        return slotNo % 2 == 0 ? NeedleCodes.Needle2 : NeedleCodes.Needle1;
+    }
+
     private async Task<bool> ConsumeReagentAsync(
         StainerDbContext dbContext,
         MachineRun run,
@@ -701,6 +998,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         int volumeUl,
         CancellationToken cancellationToken)
     {
+        if (await dbContext.ReagentConsumptions.AnyAsync(x => x.DeviceCommandExecutionId == command.Id, cancellationToken))
+        {
+            return true;
+        }
+
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var placements = await dbContext.ReagentRackPlacements
             .Where(x => x.RemovedAtUtc == null)
@@ -737,6 +1039,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             {
                 MachineRunId = run.Id,
                 WorkflowStepExecutionId = step.Id,
+                DeviceCommandExecutionId = command.Id,
                 ReagentBottleId = bottle.Id,
                 ReagentCode = reagentCode,
                 VolumeUl = used,
@@ -788,6 +1091,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     private async Task<bool> ApplyDabAsync(
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
+        MotionControlService motionControlService,
         MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
@@ -823,7 +1127,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
 
         if (dabBatch.Status == DabBatchStatus.Available)
         {
-            return await ConsumeAvailableDabBatchAsync(dbContext, run, step, command, dabBatch, now, cancellationToken);
+            return await ConsumeAvailableDabBatchAsync(dbContext, motionControlService, run, step, command, dabBatch, now, cancellationToken);
         }
 
         await AddAlarmAsync(dbContext, run.Id, "dab_batch_unavailable", "Critical", $"DAB batch {dabBatch.Id} is {dabBatch.Status} and cannot be used.", cancellationToken);
@@ -859,6 +1163,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
 
     private async Task<bool> ConsumeAvailableDabBatchAsync(
         StainerDbContext dbContext,
+        MotionControlService motionControlService,
         MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
@@ -875,6 +1180,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             PublishDabBatchChanged(run.Id, batch, "expired");
             await AddAlarmAsync(dbContext, run.Id, "dab_expired", "Critical", "A DAB batch is expired. Clean DAB mix positions before continuing.", cancellationToken);
             return false;
+        }
+
+        if (await dbContext.DabBatchUsages.AnyAsync(x => x.CommandId == command.Id, cancellationToken))
+        {
+            return true;
         }
 
         var volume = Math.Max(step.VolumeUl ?? DabFormula.VolumePerSlideUl, DabFormula.VolumePerSlideUl);
@@ -901,6 +1211,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             DabBatch = batch,
             MachineRunId = run.Id,
             WorkflowStepExecutionId = step.Id,
+            CommandId = command.Id,
             VolumeUl = volume,
             CreatedAtUtc = now
         });
@@ -922,6 +1233,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             Message = JsonSerializer.Serialize(new { runId = run.Id, volumeUl = volume, remainingUl = batch.RemainingVolumeUl }),
             CreatedAtUtc = now
         });
+        await motionControlService.RecordDabDispenseFromExecutorAsync(batch, run, step, command, volume, cancellationToken);
         return true;
     }
 
@@ -1294,6 +1606,15 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     }
 
     private sealed record MachineExecutorCommand(string RunId, string Type, string? Payload);
+
+    private sealed record ResourceRequest(string Type, string Code);
+
+    private sealed record ResourceLeaseResult(bool Ok, string? ErrorCode, string Message)
+    {
+        public static ResourceLeaseResult Succeeded() => new(true, null, "Resources acquired.");
+
+        public static ResourceLeaseResult Failed(string errorCode, string message) => new(false, errorCode, message);
+    }
 
     private static class MachineExecutorCommandType
     {

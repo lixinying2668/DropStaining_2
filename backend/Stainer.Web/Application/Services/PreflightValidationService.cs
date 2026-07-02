@@ -12,7 +12,8 @@ public sealed class PreflightValidationService(
     StainerDbContext dbContext,
     DeviceInitializationService deviceInitializationService,
     ThermalControlService thermalControlService,
-    FluidicsControlService fluidicsControlService)
+    FluidicsControlService fluidicsControlService,
+    MotionControlService motionControlService)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
@@ -35,6 +36,11 @@ public sealed class PreflightValidationService(
         if (!fluidicsReadiness.Ok)
         {
             issues.Add(new PreflightValidationIssueResponse("Fluidics", fluidicsReadiness.ErrorCode!, fluidicsReadiness.Message));
+        }
+        var motionReadiness = await motionControlService.GetReadinessAsync(cancellationToken);
+        if (!motionReadiness.Ok)
+        {
+            issues.Add(new PreflightValidationIssueResponse("Motion", motionReadiness.ErrorCode!, motionReadiness.Message));
         }
         var tasks = await dbContext.StainingTasks
             .AsNoTracking()
@@ -376,8 +382,17 @@ public sealed class PreflightValidationService(
             .OrderBy(x => x.SourceType)
             .Select(x => new { x.Id, x.SourceType, x.CurrentVolumeUl, x.CapacityUl, x.LevelStatus, x.IsConnected, x.FaultCode, x.UpdatedAtUtc })
             .ToListAsync(cancellationToken);
+        var robotArm = await dbContext.RobotArmStates
+            .AsNoTracking()
+            .Select(x => new { x.Id, x.IsHomed, x.IsConnected, x.Status, x.CurrentTargetPointCode, x.CoordinateProfileVersionId, x.LastErrorCode, x.UpdatedAtUtc })
+            .SingleOrDefaultAsync(cancellationToken);
+        var needles = await dbContext.NeedleStates
+            .AsNoTracking()
+            .OrderBy(x => x.NeedleNo)
+            .Select(x => new { x.Id, x.NeedleCode, x.IsConnected, x.Status, x.LoadedSourceType, x.LoadedReagentCode, x.SourceBottleId, x.DabBatchId, x.VolumeUl, x.LiquidClassVersionId, x.LiquidClassVersionNo, x.NeedsWash, x.LastErrorCode, x.UpdatedAtUtc })
+            .ToListAsync(cancellationToken);
 
-        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization, thermalPoints, cooling, pumps, mixers, liquidLevels });
+        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization, thermalPoints, cooling, pumps, mixers, liquidLevels, robotArm, needles });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 }

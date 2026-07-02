@@ -19,6 +19,7 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
         if (scopeFactory is not null)
         {
             await SyncFluidicsModulesAsync(cancellationToken);
+            await SyncMotionModulesAsync(cancellationToken);
         }
 
         return stateStore.Snapshot();
@@ -66,6 +67,19 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
                 cancellationToken);
         }
 
+        if (request.ModuleCode is DeviceModules.RobotArm or DeviceModules.Needles or DeviceModules.Pipette or DeviceModules.NeedleWash)
+        {
+            if (request.Parameters.TryGetValue("motionStateValidated", out var validated) && Convert.ToBoolean(validated))
+            {
+                return ExecuteValidatedMotionAsync(request, cancellationToken);
+            }
+
+            return ExecuteMotionAsync(
+                request,
+                service => service.InitializeModuleAsync(request.ModuleCode, cancellationToken),
+                cancellationToken);
+        }
+
         return ExecuteAsync(request, InitializationData(request.ModuleCode), cancellationToken);
     }
 
@@ -106,13 +120,22 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
     public Task<DeviceCommandResult> MixAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
         ExecuteFluidicsAsync(request, service => service.MixFromDeviceAsync(request, cancellationToken), cancellationToken);
 
-    public Task<DeviceCommandResult> MoveRobotAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
+    public Task<DeviceCommandResult> MoveRobotAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteMotionAsync(
+            request,
+            service => request.Action.Contains("home", StringComparison.OrdinalIgnoreCase)
+                ? service.HomeFromDeviceAsync(request, cancellationToken)
+                : service.MoveFromDeviceAsync(request, cancellationToken),
+            cancellationToken);
 
-    public Task<DeviceCommandResult> OperateNeedlesAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
+    public Task<DeviceCommandResult> OperateNeedlesAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteMotionAsync(request, service => service.PipetteFromDeviceAsync(request, cancellationToken), cancellationToken);
 
-    public Task<DeviceCommandResult> PipetteAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
+    public Task<DeviceCommandResult> PipetteAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteMotionAsync(request, service => service.PipetteFromDeviceAsync(request, cancellationToken), cancellationToken);
 
-    public Task<DeviceCommandResult> WashNeedlesAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
+    public Task<DeviceCommandResult> WashNeedlesAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteMotionAsync(request, service => service.WashNeedlesFromDeviceAsync(request, cancellationToken), cancellationToken);
 
     public Task<DeviceCommandResult> PrepareDabAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
         ExecuteAsync(request, new Dictionary<string, object?>
@@ -357,6 +380,116 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
             request.Parameters);
     }
 
+    private async Task<DeviceCommandResult> ExecuteMotionAsync(
+        DeviceOperationRequest request,
+        Func<MotionControlService, Task<MotionDeviceResult>> execute,
+        CancellationToken cancellationToken)
+    {
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var targetJson = JsonSerializer.Serialize(request.Parameters, JsonOptions);
+        stateStore.BeginOperation(request.ModuleCode, request.Action, targetJson);
+        var genericFault = stateStore.ConsumeFault(request.ModuleCode);
+        if (genericFault is not null)
+        {
+            var status = genericFault.FaultType switch
+            {
+                DeviceFaultTypes.TimeoutNextCommand => DeviceCommandStatuses.TimedOut,
+                DeviceFaultTypes.ReturnUnknown => DeviceCommandStatuses.Unknown,
+                _ => DeviceCommandStatuses.Failed
+            };
+            stateStore.CompleteOperation(
+                request.ModuleCode,
+                genericFault.FaultType == DeviceFaultTypes.Disconnect ? DeviceConnectionStatuses.Disconnected : DeviceConnectionStatuses.Faulted,
+                null,
+                genericFault.ErrorCode ?? "mock_fault",
+                genericFault.Message);
+            return new DeviceCommandResult(false, status, request.ModuleCode, request.Action, genericFault.ErrorCode ?? "mock_fault", genericFault.Message, startedAtUtc, DateTimeOffset.UtcNow, status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown, new Dictionary<string, object?>
+            {
+                ["faultPlanId"] = genericFault.Id,
+                ["faultType"] = genericFault.FaultType
+            });
+        }
+
+        if (scopeFactory is null)
+        {
+            stateStore.CompleteOperation(request.ModuleCode, DeviceConnectionStatuses.Faulted, null, "motion_service_unavailable", "Motion service is unavailable.");
+            return new DeviceCommandResult(false, DeviceCommandStatuses.NotSupported, request.ModuleCode, request.Action, "motion_service_unavailable", "Motion service is unavailable.", startedAtUtc, DateTimeOffset.UtcNow, true, new Dictionary<string, object?>());
+        }
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        MotionDeviceResult result;
+        try
+        {
+            result = await execute(scope.ServiceProvider.GetRequiredService<MotionControlService>());
+        }
+        catch (BusinessRuleException ex)
+        {
+            stateStore.CompleteOperation(request.ModuleCode, DeviceConnectionStatuses.Faulted, null, ex.Code, ex.Message);
+            return new DeviceCommandResult(false, DeviceCommandStatuses.Failed, request.ModuleCode, request.Action, ex.Code, ex.Message, startedAtUtc, DateTimeOffset.UtcNow, true, new Dictionary<string, object?> { ["businessRule"] = ex.Code });
+        }
+        var currentJson = JsonSerializer.Serialize(result.Data, JsonOptions);
+        stateStore.CompleteOperation(
+            request.ModuleCode,
+            result.Ok ? DeviceConnectionStatuses.Connected : IsMotionDisconnected(result) ? DeviceConnectionStatuses.Disconnected : DeviceConnectionStatuses.Faulted,
+            currentJson,
+            result.ErrorCode,
+            result.Ok ? null : result.Message);
+        return new DeviceCommandResult(
+            result.Ok,
+            result.Status,
+            request.ModuleCode,
+            request.Action,
+            result.ErrorCode,
+            result.Message,
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            result.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+            result.Data);
+    }
+
+    private async Task<DeviceCommandResult> ExecuteValidatedMotionAsync(DeviceOperationRequest request, CancellationToken cancellationToken)
+    {
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var targetJson = JsonSerializer.Serialize(request.Parameters, JsonOptions);
+        stateStore.BeginOperation(request.ModuleCode, request.Action, targetJson);
+        var genericFault = stateStore.ConsumeFault(request.ModuleCode);
+        if (genericFault is not null)
+        {
+            var status = genericFault.FaultType switch
+            {
+                DeviceFaultTypes.TimeoutNextCommand => DeviceCommandStatuses.TimedOut,
+                DeviceFaultTypes.ReturnUnknown => DeviceCommandStatuses.Unknown,
+                _ => DeviceCommandStatuses.Failed
+            };
+            stateStore.CompleteOperation(
+                request.ModuleCode,
+                genericFault.FaultType == DeviceFaultTypes.Disconnect ? DeviceConnectionStatuses.Disconnected : DeviceConnectionStatuses.Faulted,
+                null,
+                genericFault.ErrorCode ?? "mock_fault",
+                genericFault.Message);
+            return new DeviceCommandResult(false, status, request.ModuleCode, request.Action, genericFault.ErrorCode ?? "mock_fault", genericFault.Message, startedAtUtc, DateTimeOffset.UtcNow, status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown, new Dictionary<string, object?>
+            {
+                ["faultPlanId"] = genericFault.Id,
+                ["faultType"] = genericFault.FaultType
+            });
+        }
+
+        await Task.Delay(CommandDelay, cancellationToken);
+        var currentJson = JsonSerializer.Serialize(request.Parameters, JsonOptions);
+        stateStore.CompleteOperation(request.ModuleCode, DeviceConnectionStatuses.Connected, currentJson, null, null);
+        return new DeviceCommandResult(
+            true,
+            DeviceCommandStatuses.Succeeded,
+            request.ModuleCode,
+            request.Action,
+            null,
+            $"Mock {request.ModuleCode}/{request.Action} completed.",
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            true,
+            request.Parameters);
+    }
+
     private async Task SyncFluidicsModulesAsync(CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory!.CreateAsyncScope();
@@ -373,10 +506,38 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
         }
     }
 
+    private async Task SyncMotionModulesAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory!.CreateAsyncScope();
+        var states = await scope.ServiceProvider.GetRequiredService<MotionControlService>().GetDeviceModuleStatesAsync(cancellationToken);
+        foreach (var state in states)
+        {
+            stateStore.SyncModuleState(
+                state.ModuleCode,
+                state.ConnectionStatus,
+                state.CurrentAction,
+                state.CurrentParametersJson,
+                state.ErrorCode,
+                state.ErrorMessage);
+        }
+    }
+
     private static bool IsDisconnected(FluidicsDeviceResult result)
     {
         if (string.Equals(result.ErrorCode, FluidicsFaultTypes.Disconnected, StringComparison.OrdinalIgnoreCase)
             || string.Equals(result.ErrorCode, LiquidLevelStatuses.Disconnected, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return result.Data.TryGetValue("isConnected", out var connected) && connected is bool value && !value;
+    }
+
+    private static bool IsMotionDisconnected(MotionDeviceResult result)
+    {
+        if (string.Equals(result.ErrorCode, MotionStatuses.Disconnected, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result.ErrorCode, "disconnected", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(result.ErrorCode, "mock_disconnect", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }

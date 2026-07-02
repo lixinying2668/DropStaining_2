@@ -17,6 +17,7 @@ public sealed class RunControlService(
     CoordinateProfileLifecycleService coordinateProfileLifecycleService,
     ThermalControlService thermalControlService,
     FluidicsControlService fluidicsControlService,
+    MotionControlService motionControlService,
     MachineExecutorLeaseService leaseService,
     SafetyLogWriter safetyLogWriter)
 {
@@ -35,6 +36,7 @@ public sealed class RunControlService(
                 await deviceInitializationService.EnsureReadyAsync(cancellationToken);
                 await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
                 await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
+                await motionControlService.EnsureReadyForRunAsync(cancellationToken);
                 leaseService.EnsureOwner();
                 var preflight = string.IsNullOrWhiteSpace(request.PreflightStateHash)
                     ? null

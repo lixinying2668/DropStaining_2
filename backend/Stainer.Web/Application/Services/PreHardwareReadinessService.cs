@@ -12,6 +12,7 @@ public sealed class PreHardwareReadinessService(
     StartupRecoveryService startupRecoveryService,
     DatabaseMaintenanceService databaseMaintenanceService,
     FluidicsControlService fluidicsControlService,
+    MotionControlService motionControlService,
     StainerDbContext dbContext,
     InMemoryRuntimeEventPublisher eventPublisher,
     SafetyLogWriter safetyLogWriter)
@@ -53,6 +54,11 @@ public sealed class PreHardwareReadinessService(
             "fluidics_formal_state_ready",
             fluidics.Ok,
             fluidics.Message));
+        var motion = await motionControlService.GetReadinessAsync(cancellationToken);
+        checks.Add(new PreHardwareReadinessCheckResponse(
+            "motion_formal_state_ready",
+            motion.Ok,
+            motion.Message));
 
         if (createBackup)
         {

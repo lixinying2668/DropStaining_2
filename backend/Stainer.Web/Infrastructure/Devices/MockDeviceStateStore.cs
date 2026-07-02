@@ -13,6 +13,8 @@ public sealed class MockDeviceStateStore
         DeviceModules.SampleScanner,
         DeviceModules.ReagentScanner,
         DeviceModules.RobotArm,
+        DeviceModules.Needles,
+        DeviceModules.Pipette,
         DeviceModules.Pump,
         DeviceModules.Mixer,
         DeviceModules.LiquidLevel,

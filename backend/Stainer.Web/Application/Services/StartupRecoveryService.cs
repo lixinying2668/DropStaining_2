@@ -23,7 +23,8 @@ public sealed class StartupRecoveryService(
     private static readonly string[] UncertainCommandStatuses =
     [
         DeviceCommandStatus.CommandSent,
-        DeviceCommandStatus.Acknowledged
+        DeviceCommandStatus.Acknowledged,
+        DeviceCommandStatus.DeviceAcknowledged
     ];
 
     public async Task<StartupRecoveryReportResponse> RecoverAsync(CancellationToken cancellationToken = default)
@@ -40,6 +41,18 @@ public sealed class StartupRecoveryService(
                 recoveredAtUtc,
                 reason = "Service restarted before command completion could be confirmed."
             });
+        }
+        var commandIds = commands.Select(x => x.Id).ToList();
+        if (commandIds.Count > 0)
+        {
+            var leases = await dbContext.MachineResourceLeases
+                .Where(x => commandIds.Contains(x.DeviceCommandExecutionId!) && x.Status == MachineResourceLeaseStatus.Acquired)
+                .ToListAsync(cancellationToken);
+            foreach (var lease in leases)
+            {
+                lease.Status = MachineResourceLeaseStatus.NeedsManualResolution;
+                lease.WaitReason = "Startup recovery marked the owning command Unknown.";
+            }
         }
 
         var stepIds = commands

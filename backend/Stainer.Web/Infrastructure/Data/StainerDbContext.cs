@@ -61,6 +61,10 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<MixerChannelState> MixerChannelStates => Set<MixerChannelState>();
     public DbSet<LiquidContainerState> LiquidContainerStates => Set<LiquidContainerState>();
     public DbSet<FluidicsTelemetry> FluidicsTelemetry => Set<FluidicsTelemetry>();
+    public DbSet<RobotArmState> RobotArmStates => Set<RobotArmState>();
+    public DbSet<NeedleState> NeedleStates => Set<NeedleState>();
+    public DbSet<PipettingOperation> PipettingOperations => Set<PipettingOperation>();
+    public DbSet<MachineResourceLease> MachineResourceLeases => Set<MachineResourceLease>();
     public DbSet<ReagentReservation> ReagentReservations => Set<ReagentReservation>();
     public DbSet<ReagentConsumption> ReagentConsumptions => Set<ReagentConsumption>();
     public DbSet<SystemLiquidUsage> SystemLiquidUsages => Set<SystemLiquidUsage>();
@@ -113,6 +117,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureDeviceInitialization(modelBuilder);
         ConfigureThermalState(modelBuilder);
         ConfigureFluidicsState(modelBuilder);
+        ConfigureMotionState(modelBuilder);
     }
 
     public override int SaveChanges()
@@ -1668,6 +1673,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         consumptions.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         consumptions.HasIndex(x => new { x.DabBatchId, x.DeviceCommandExecutionId });
         consumptions.HasIndex(x => x.DeviceCommandExecutionId);
+        consumptions.HasIndex(x => new { x.DeviceCommandExecutionId, x.ReagentBottleId }).IsUnique().HasFilter("device_command_execution_id IS NOT NULL");
         consumptions.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
         consumptions.HasOne(x => x.WorkflowStepExecution).WithMany().HasForeignKey(x => x.WorkflowStepExecutionId).OnDelete(DeleteBehavior.Cascade);
         consumptions.HasOne(x => x.DeviceCommandExecution).WithMany().HasForeignKey(x => x.DeviceCommandExecutionId).OnDelete(DeleteBehavior.SetNull);
@@ -1705,6 +1711,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         dispenses.Property(x => x.TargetSlotCode).HasColumnName("target_slot_code").HasMaxLength(64);
         dispenses.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         dispenses.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        dispenses.HasIndex(x => new { x.DeviceCommandExecutionId, x.ReagentBottleId }).IsUnique().HasFilter("reagent_bottle_id IS NOT NULL");
         dispenses.HasOne(x => x.DeviceCommandExecution).WithMany().HasForeignKey(x => x.DeviceCommandExecutionId).OnDelete(DeleteBehavior.Cascade);
         dispenses.HasOne(x => x.ReagentBottle).WithMany().HasForeignKey(x => x.ReagentBottleId).OnDelete(DeleteBehavior.SetNull);
 
@@ -2020,5 +2027,107 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         telemetry.HasIndex(x => new { x.SourceType, x.SourceId, x.RecordedAtUtc });
         telemetry.HasIndex(x => x.RecordedAtUtc);
         telemetry.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
+    }
+
+    private static void ConfigureMotionState(ModelBuilder modelBuilder)
+    {
+        var arm = modelBuilder.Entity<RobotArmState>();
+        arm.ToTable("robot_arm_states");
+        arm.HasKey(x => x.Id);
+        arm.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        arm.Property(x => x.IsHomed).HasColumnName("is_homed").IsRequired();
+        arm.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        arm.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        arm.Property(x => x.CurrentTargetPointCode).HasColumnName("current_target_point_code").HasMaxLength(128);
+        arm.Property(x => x.CurrentXUm).HasColumnName("current_x_um");
+        arm.Property(x => x.CurrentYUm).HasColumnName("current_y_um");
+        arm.Property(x => x.CurrentZUm).HasColumnName("current_z_um");
+        arm.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        arm.Property(x => x.CurrentCommandId).HasColumnName("current_command_id").HasMaxLength(128);
+        arm.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        arm.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        arm.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        arm.Property(x => x.LastErrorCode).HasColumnName("last_error_code").HasMaxLength(128);
+        arm.Property(x => x.LastErrorMessage).HasColumnName("last_error_message").HasMaxLength(2000);
+        arm.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+
+        var needles = modelBuilder.Entity<NeedleState>();
+        needles.ToTable("needle_states");
+        needles.HasKey(x => x.Id);
+        needles.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        needles.Property(x => x.NeedleCode).HasColumnName("needle_code").HasMaxLength(16).IsRequired();
+        needles.Property(x => x.NeedleNo).HasColumnName("needle_no").IsRequired();
+        needles.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        needles.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        needles.Property(x => x.LoadedSourceType).HasColumnName("loaded_source_type").HasMaxLength(32).IsRequired();
+        needles.Property(x => x.LoadedReagentCode).HasColumnName("loaded_reagent_code").HasMaxLength(64);
+        needles.Property(x => x.SourceBottleId).HasColumnName("source_bottle_id").HasMaxLength(36);
+        needles.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36);
+        needles.Property(x => x.SystemLiquidSourceType).HasColumnName("system_liquid_source_type").HasMaxLength(64);
+        needles.Property(x => x.SourcePositionCode).HasColumnName("source_position_code").HasMaxLength(64);
+        needles.Property(x => x.VolumeUl).HasColumnName("volume_ul").IsRequired();
+        needles.Property(x => x.LiquidClassVersionId).HasColumnName("liquid_class_version_id").HasMaxLength(36);
+        needles.Property(x => x.LiquidClassVersionNo).HasColumnName("liquid_class_version_no");
+        needles.Property(x => x.LiquidClassParametersJson).HasColumnName("liquid_class_parameters_json").HasMaxLength(16000).HasDefaultValue("{}").IsRequired();
+        needles.Property(x => x.NeedsWash).HasColumnName("needs_wash").IsRequired();
+        needles.Property(x => x.CurrentCommandId).HasColumnName("current_command_id").HasMaxLength(128);
+        needles.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        needles.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        needles.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        needles.Property(x => x.LastErrorCode).HasColumnName("last_error_code").HasMaxLength(128);
+        needles.Property(x => x.LastErrorMessage).HasColumnName("last_error_message").HasMaxLength(2000);
+        needles.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+        needles.HasIndex(x => x.NeedleCode).IsUnique();
+        needles.HasIndex(x => x.NeedleNo).IsUnique();
+
+        var ops = modelBuilder.Entity<PipettingOperation>();
+        ops.ToTable("pipetting_operations");
+        ops.HasKey(x => x.Id);
+        ops.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        ops.Property(x => x.OperationType).HasColumnName("operation_type").HasMaxLength(64).IsRequired();
+        ops.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        ops.Property(x => x.NeedleCode).HasColumnName("needle_code").HasMaxLength(16);
+        ops.Property(x => x.ExecutionMode).HasColumnName("execution_mode").HasMaxLength(32).IsRequired();
+        ops.Property(x => x.TargetPointCode).HasColumnName("target_point_code").HasMaxLength(128);
+        ops.Property(x => x.SecondaryTargetPointCode).HasColumnName("secondary_target_point_code").HasMaxLength(128);
+        ops.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        ops.Property(x => x.LiquidClassVersionId).HasColumnName("liquid_class_version_id").HasMaxLength(36);
+        ops.Property(x => x.LiquidClassVersionNo).HasColumnName("liquid_class_version_no");
+        ops.Property(x => x.LiquidClassParametersJson).HasColumnName("liquid_class_parameters_json").HasMaxLength(16000).HasDefaultValue("{}").IsRequired();
+        ops.Property(x => x.SourceType).HasColumnName("source_type").HasMaxLength(32).IsRequired();
+        ops.Property(x => x.ReagentCode).HasColumnName("reagent_code").HasMaxLength(64);
+        ops.Property(x => x.ReagentBottleId).HasColumnName("reagent_bottle_id").HasMaxLength(36);
+        ops.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36);
+        ops.Property(x => x.SystemLiquidSourceType).HasColumnName("system_liquid_source_type").HasMaxLength(64);
+        ops.Property(x => x.SourcePositionCode).HasColumnName("source_position_code").HasMaxLength(64);
+        ops.Property(x => x.VolumeUl).HasColumnName("volume_ul").IsRequired();
+        ops.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        ops.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        ops.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        ops.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(128);
+        ops.Property(x => x.ErrorMessage).HasColumnName("error_message").HasMaxLength(2000);
+        ops.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        ops.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
+        ops.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
+        ops.HasIndex(x => x.DeviceCommandExecutionId);
+
+        var leases = modelBuilder.Entity<MachineResourceLease>();
+        leases.ToTable("machine_resource_leases");
+        leases.HasKey(x => x.Id);
+        leases.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        leases.Property(x => x.ResourceCode).HasColumnName("resource_code").HasMaxLength(128).IsRequired();
+        leases.Property(x => x.ResourceType).HasColumnName("resource_type").HasMaxLength(32).IsRequired();
+        leases.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        leases.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        leases.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        leases.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        leases.Property(x => x.CommandType).HasColumnName("command_type").HasMaxLength(128);
+        leases.Property(x => x.WaitReason).HasColumnName("wait_reason").HasMaxLength(2000);
+        leases.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        leases.Property(x => x.AcquiredAtUtc).HasColumnName("acquired_at_utc");
+        leases.Property(x => x.ReleasedAtUtc).HasColumnName("released_at_utc");
+        leases.HasIndex(x => x.ResourceCode).IsUnique().HasFilter("status = 'Acquired'");
+        leases.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
+        leases.HasIndex(x => x.DeviceCommandExecutionId);
     }
 }

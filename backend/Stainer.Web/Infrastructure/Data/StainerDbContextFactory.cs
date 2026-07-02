@@ -14,7 +14,6 @@ public sealed class StainerDbContextFactory : IDesignTimeDbContextFactory<Staine
 
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite(connectionString)
-            .AddInterceptors(new SqlitePragmaConnectionInterceptor())
             .Options;
 
         return new StainerDbContext(options);

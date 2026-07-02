@@ -903,7 +903,7 @@ public sealed class RuntimeLedgerExecutorTests
             .Where(x => x.IsActive && x.Status == CoordinateProfileVersionStatus.Active)
             .Select(x => x.Id)
             .SingleAsync();
-        var coordinateSnapshot = $$"""{"coordinateProfileVersionId":"{{coordinateVersionId}}","source":"runtime-test"}""";
+        var coordinateSnapshot = BuildCoordinateSnapshot(coordinateVersionId);
         var liquidClassSnapshot = await new LiquidClassSnapshotFactory(dbContext).FreezeForWorkflowAsync(workflowVersion);
         var task = new StainingTask
         {
@@ -1012,5 +1012,56 @@ public sealed class RuntimeLedgerExecutorTests
         });
         await dbContext.SaveChangesAsync();
         return bottle.Id;
+    }
+
+    private static string BuildCoordinateSnapshot(string coordinateVersionId)
+    {
+        var targetPoints = new List<object>();
+        var index = 0;
+        foreach (var drawer in new[] { "A", "B", "C", "D" })
+        {
+            for (var slot = 1; slot <= 4; slot++)
+            {
+                targetPoints.Add(new
+                {
+                    pointCode = $"{drawer}-{slot:00}",
+                    pointType = "SlideSlot",
+                    calibratedXUm = 100_000 + index * 25_000,
+                    calibratedYUm = 100_000 + (drawer[0] - 'A') * 25_000,
+                    calibratedZUm = 10_000,
+                    safeZUm = 20_000,
+                    liquidDetectZUm = 8_000,
+                    dispenseZUm = 7_000,
+                    validationStatus = "Verified",
+                    requiresCalibration = false,
+                    isEnabled = true
+                });
+                index++;
+            }
+        }
+
+        for (var rack = 1; rack <= 8; rack++)
+        {
+            targetPoints.Add(new
+            {
+                pointCode = $"R{rack}",
+                pointType = "ReagentRack",
+                calibratedXUm = 50_000 + rack * 20_000,
+                calibratedYUm = 30_000,
+                calibratedZUm = 10_000,
+                safeZUm = 20_000,
+                liquidDetectZUm = 6_000,
+                dispenseZUm = 5_000,
+                validationStatus = "Verified",
+                requiresCalibration = false,
+                isEnabled = true
+            });
+        }
+
+        targetPoints.Add(new { pointCode = "M1", pointType = "DabMix", calibratedXUm = 300_000, calibratedYUm = 50_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true });
+        targetPoints.Add(new { pointCode = "NeedleWash", pointType = "NeedleWash", calibratedXUm = 320_000, calibratedYUm = 50_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true });
+        targetPoints.Add(new { pointCode = "WashInnerLeft", pointType = "WashInner", calibratedXUm = 340_000, calibratedYUm = 50_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true });
+        targetPoints.Add(new { pointCode = "WashOuterLeft", pointType = "WashOuter", calibratedXUm = 360_000, calibratedYUm = 50_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true });
+        return JsonSerializer.Serialize(new { coordinateProfileVersionId = coordinateVersionId, source = "runtime-test", targetPoints });
     }
 }

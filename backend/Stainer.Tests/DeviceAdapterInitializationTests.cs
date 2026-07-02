@@ -120,7 +120,7 @@ public sealed class DeviceAdapterInitializationTests
         Assert.True(initialized.Ok, initialized.Message);
         Assert.False(initialized.Replayed);
         Assert.Equal(DeviceInitializationStatus.Ready, initialized.Status);
-        Assert.Equal(10, initialized.Checks.Count);
+        Assert.Equal(12, initialized.Checks.Count);
         Assert.All(initialized.Checks, check => Assert.Equal(DeviceInitializationCheckStatus.Succeeded, check.Status));
 
         var replayed = await PostJsonAsync<DeviceInitializationResponse>(client, "/api/device-initialization", request);
@@ -145,7 +145,7 @@ public sealed class DeviceAdapterInitializationTests
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.Equal(1, await dbContext.DeviceInitializationRuns.CountAsync(x => x.CommandId == request.commandId));
-        Assert.Equal(10, await dbContext.DeviceInitializationChecks.CountAsync(x => x.DeviceInitializationRunId == initialized.RunId));
+        Assert.Equal(12, await dbContext.DeviceInitializationChecks.CountAsync(x => x.DeviceInitializationRunId == initialized.RunId));
         Assert.Equal(1, await dbContext.CommandReceipts.CountAsync(x => x.CommandId == request.commandId));
         Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "device.initialization.completed" && x.EntityId == initialized.RunId));
 
@@ -259,7 +259,7 @@ public sealed class DeviceAdapterInitializationTests
         Assert.True(latest!.Ok);
         Assert.Equal(runId, latest.RunId);
         Assert.Equal(DeviceInitializationStatus.Ready, latest.Status);
-        Assert.Equal(10, latest.Checks.Count);
+        Assert.Equal(12, latest.Checks.Count);
     }
 
     private static DeviceOperationRequest Request(string moduleCode, string action)

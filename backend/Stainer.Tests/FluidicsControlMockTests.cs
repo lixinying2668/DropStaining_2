@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -504,7 +505,7 @@ public sealed class FluidicsControlMockTests
             .Select(x => x.Id)
             .SingleAsync();
         var workflowSnapshot = $$"""{"workflowVersionId":"{{workflowVersion.Id}}","source":"fluidics-test"}""";
-        var coordinateSnapshot = $$"""{"coordinateProfileVersionId":"{{coordinateVersionId}}","source":"fluidics-test"}""";
+        var coordinateSnapshot = BuildCoordinateSnapshot(coordinateVersionId);
         var liquidSnapshot = await new LiquidClassSnapshotFactory(dbContext).FreezeForWorkflowAsync(workflowVersion);
         var drawer = await dbContext.Drawers.SingleAsync(x => x.Code == "A");
         var batch = new ChannelBatch
@@ -606,6 +607,19 @@ public sealed class FluidicsControlMockTests
         });
         await dbContext.SaveChangesAsync();
         return bottle.Id;
+    }
+
+    private static string BuildCoordinateSnapshot(string coordinateVersionId)
+    {
+        var targetPoints = new[]
+        {
+            new { pointCode = "A-01", pointType = "SlideSlot", calibratedXUm = 100_000, calibratedYUm = 100_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 8_000, dispenseZUm = 7_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true },
+            new { pointCode = "A-02", pointType = "SlideSlot", calibratedXUm = 125_000, calibratedYUm = 100_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 8_000, dispenseZUm = 7_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true },
+            new { pointCode = "R1", pointType = "ReagentRack", calibratedXUm = 50_000, calibratedYUm = 30_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true },
+            new { pointCode = "WashInnerLeft", pointType = "WashInner", calibratedXUm = 340_000, calibratedYUm = 50_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true },
+            new { pointCode = "WashOuterLeft", pointType = "WashOuter", calibratedXUm = 360_000, calibratedYUm = 50_000, calibratedZUm = 10_000, safeZUm = 20_000, liquidDetectZUm = 6_000, dispenseZUm = 5_000, validationStatus = "Verified", requiresCalibration = false, isEnabled = true }
+        };
+        return JsonSerializer.Serialize(new { coordinateProfileVersionId = coordinateVersionId, source = "fluidics-test", targetPoints });
     }
 
     private sealed record FactoryContext(WebApplicationFactory<Program> Factory, string DatabasePath);

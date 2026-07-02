@@ -301,6 +301,12 @@ public sealed class PreHardwareSafetyTests
         Assert.True(replayedBackup.Replayed);
         Assert.Equal(backup.BackupPath, replayedBackup.BackupPath);
 
+        var initialized = await PostJsonAsync<DeviceInitializationResponse>(adminClient, "/api/device-initialization", new
+        {
+            commandId = "cmd-prehardware-device-initialization"
+        });
+        Assert.True(initialized.Ok, initialized.Message);
+
         var readiness = await adminClient.GetFromJsonAsync<PreHardwareReadinessResponse>("/api/prehardware-readiness");
         Assert.NotNull(readiness);
         Assert.True(readiness!.Ok, string.Join("; ", readiness.BlockingReasons));

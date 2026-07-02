@@ -63,6 +63,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeviceControlService>();
         services.AddScoped<ThermalControlService>();
         services.AddScoped<FluidicsControlService>();
+        services.AddScoped<MotionControlService>();
         services.AddScoped<DeviceInitializationService>();
         services.AddScoped<StartupRecoveryService>();
         services.AddScoped<DatabaseMaintenanceService>();
