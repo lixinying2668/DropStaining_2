@@ -1,0 +1,11 @@
+{
+  "name": "stainer-mock-browser-acceptance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:browser": "node tools/browser-acceptance/mock-stage-acceptance.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.55.0"
+  }
+}

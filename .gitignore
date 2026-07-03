@@ -7,6 +7,9 @@ obj/
 .nuget/
 .tmp/
 
+## Node/browser acceptance dependencies
+node_modules/
+
 ## IDE & user settings
 *.user
 *.suo

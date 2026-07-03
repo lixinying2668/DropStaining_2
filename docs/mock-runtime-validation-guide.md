@@ -825,3 +825,55 @@ Mock 运行太快，来不及点暂停或故障
 
 - 使用本文 PowerShell 命令在 start 后立即发送 pause/fault。
 - 手工页面验证时，可以创建更多任务增加步骤数，或临时调大 `MachineExecutor` 的 `mockDelay`。
+# 2026-07-03 Mock 阶段收口验收说明
+
+本节为当前有效说明。下方旧内容保留为历史手工记录，若与本节冲突，以本节为准。
+
+## 当前自动化浏览器验收
+
+运行前先构建 Release：
+
+```powershell
+dotnet build Stainer.sln --configuration Release
+npm install
+npm run test:browser
+```
+
+浏览器验收脚本：
+
+```text
+tools/browser-acceptance/mock-stage-acceptance.mjs
+```
+
+脚本使用 `playwright-core` 和系统 Chrome/Edge，固定 1920×1080 视口，并覆盖：
+
+- 操作员建立 HE 通道并创建 HE 样本；
+- 操作员建立 IHC 通道，完成 LIS 单结果 IHC 创建；
+- 操作员完成 LIS 多结果候选选择后创建 IHC 样本；
+- 查看试剂架、DAB、启动前预检和运行页；
+- 操作员不可见工程诊断详情，工程师可看诊断，管理员可进管理页；
+- 两个浏览器页面状态同步；
+- 模拟 SignalR WebSocket 断线重连，确认页面重新拉取 `/api/operator/snapshot` 正式快照。
+
+脚本启动独立后端实例，显式隔离：
+
+- `STAINER_DATABASE_URL=Data Source=<temp>\db\stainer-browser.db`
+- `MachineExecutor__LeasePath=<temp>\locks\machine-executor.lock`
+- `Safety__LogDirectory=<temp>\logs`
+- `Database__BackupDirectory=<temp>\backups`
+
+默认结束后清理临时目录，不写 `data/stainer.db`、正式备份或正式运行日志。需要排查时可设置：
+
+```powershell
+$env:STAINER_KEEP_BROWSER_TEMP = "1"
+npm run test:browser
+```
+
+## 当前边界
+
+- 浏览器层不重复验证故障、Unknown、重做、复杂 DAB 生命周期等后端已覆盖场景。
+- 正式页面不得调用旧 `/api/state`、旧 `/api/run/start|pause|resume|stop` 或旧 `/api/dab` 作为业务权威来源。
+- 旧 `/api/state`、旧 `/api/run/start|pause|resume|stop` 仅 Development/Testing 映射；Staging/Production 不映射。
+- `/control-console` 仅 Development/Testing 可用，不进入正式导航。
+
+完整阶段报告见 `docs/mock-stage-completion-report.md`；工程诊断说明见 `docs/engineer-diagnostics-guide.md`；HE 空载干跑前检查见 `docs/he-dry-run-preflight-checklist.md`。

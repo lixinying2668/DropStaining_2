@@ -310,7 +310,7 @@ function formatDateTime(value){
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', {hour12:false});
 }
 
-function renderAlerts(state){
+function renderAlertsLegacySnapshot(state){
   if(!document.getElementById('alarmList')) return;
   const alarms = state.alarms || [];
   const root = document.getElementById('alarmList');
@@ -320,7 +320,7 @@ function renderAlerts(state){
   renderTimeline('alertLogs', state.logs || [], 40);
 }
 
-function renderHistory(state){
+function renderHistoryLegacySnapshot(state){
   if(!document.getElementById('historySlides')) return;
   const slideRows = (state.channels || []).flatMap((channel, index) => {
     const letter = ['A','B','C','D'][index] || channel.id;
@@ -918,7 +918,7 @@ function commandId(prefix){
   return prefix + '-' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2));
 }
 
-async function renderAdmin(state){
+async function renderAdminLegacyInitial(state){
   if(!document.getElementById('userTable')) return;
   const [users, roles, workflows, mappings, catalog, alarms] = await Promise.all([
     api('/api/users'), api('/api/roles'), api('/api/workflows'), api('/api/primary-antibody-mappings'),
@@ -1749,7 +1749,7 @@ async function renderHistory(){
   await loadTraceAudit({silentForbidden:true});
 }
 
-async function renderAdmin(state){
+async function renderAdminLegacySnapshot(state){
   if(!document.getElementById('userTable')) return;
   const users = await api('/api/users');
   setText('adminUserCount', users.length);
@@ -1990,7 +1990,7 @@ function sampleWorkflowText(channel, slide){
   ].filter(Boolean).join(' / ');
 }
 
-function renderSampleSlot(channel, letter, slot){
+function renderSampleSlotLegacyColumn(channel, letter, slot){
   const slide = (channel.slides || []).find(x => Number(x.slot) === slot);
   const code = slotCode(letter, slot);
   const safeLetter = escapeHtml(letter);
@@ -2003,7 +2003,7 @@ function renderSampleSlot(channel, letter, slot){
   return `<div class="sample-slot occupied compact-slot" onclick="showSampleDetail('${safeLetter}', ${slot})"><div class="slot-no">${escapeHtml(code)}</div><div class="slot-main"><b>${escapeHtml(sampleShortCode(slide))}</b><span>${escapeHtml(status)}</span></div><button class="btn btn-soft" onclick="event.stopPropagation();showSampleDetail('${safeLetter}', ${slot})">查看</button></div>`;
 }
 
-function renderChannelWorkflowPicker(channel, letter, workflow){
+function renderChannelWorkflowPickerLegacyColumn(channel, letter, workflow){
   const locked = channel.workflowLocked || channel.workflowSelectionStatus === 'Locked';
   const canSelect = !workflow.selected && channel.canSelectWorkflow !== false && !locked;
   const canChange = workflow.selected && channel.canChangeWorkflow && !locked;
@@ -2019,7 +2019,7 @@ function renderChannelWorkflowPicker(channel, letter, workflow){
   return `<div class="channel-script-line ${workflow.selected ? 'selected' : 'unselected'}"><span>实验类型：<b>${escapeHtml(label)}</b><em>${escapeHtml(detail)}</em></span>${action}</div>`;
 }
 
-function renderSamples(state){
+function renderSamplesLegacyColumn(state){
   if(!document.getElementById('sampleCabinet')) return;
   const count = slideCount(state);
   setText('sampleBadge', `${count}/16 已占用`);
@@ -2073,7 +2073,7 @@ function reagentShortStateLabel(scanState){
   return ({VALID:'VALID', INVALID:'INVALID', EMPTY:'EMPTY', UNSCANNED:'未扫码'}[scanState] || scanState || '未扫码');
 }
 
-function renderReagentRackFromDatabase(rack){
+function renderReagentRackFromDatabaseLegacyInitial(rack){
   const positions = Array.isArray(rack) ? rack : [];
   const validCount = positions.filter(x => scanStateOf(x) === 'VALID').length;
   const invalidCount = positions.filter(x => scanStateOf(x) === 'INVALID').length;
