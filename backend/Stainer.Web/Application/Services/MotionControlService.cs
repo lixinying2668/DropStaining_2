@@ -774,19 +774,9 @@ public sealed class MotionControlService(
             return PipettingExecutionModes.Sequential;
         }
 
-        var p1 = RequireFrozenTarget(snapshot, primaryTarget);
-        var p2 = RequireFrozenTarget(snapshot, secondary);
-        var p1Limit = ValidateSoftLimits(p1);
-        var p2Limit = ValidateSoftLimits(p2);
-        var canSync = p1.CalibratedXUm.HasValue
-            && p2.CalibratedXUm.HasValue
-            && p1.CalibratedYUm.HasValue
-            && p2.CalibratedYUm.HasValue
-            && p1Limit.Ok
-            && p2Limit.Ok
-            && Math.Abs(p2.CalibratedXUm.Value - p1.CalibratedXUm.Value) == 25_000
-            && p1.CalibratedYUm.Value == p2.CalibratedYUm.Value;
-        return canSync ? PipettingExecutionModes.Synchronized : PipettingExecutionModes.Sequential;
+        _ = RequireFrozenTarget(snapshot, primaryTarget);
+        _ = RequireFrozenTarget(snapshot, secondary);
+        return PipettingExecutionModes.Sequential;
     }
 
     private static MotionModuleState BuildModuleState(string moduleCode, bool ready, bool disconnected, string? errorCode, string? errorMessage, object data) => new(

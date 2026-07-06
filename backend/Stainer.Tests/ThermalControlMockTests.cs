@@ -253,10 +253,14 @@ public sealed class ThermalControlMockTests
             builder.UseEnvironment("Testing");
             builder.UseSetting("ConnectionStrings:StainerDatabase", $"Data Source={databasePath}");
             builder.UseSetting("Device:Mode", deviceMode);
+            builder.UseSetting("Device:HardwareAvailable", deviceMode == DeviceModes.Real ? "true" : "false");
+            builder.UseSetting("Device:StartupInitialization:Enabled", "false");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
-                ["Device:Mode"] = deviceMode
+                ["Device:Mode"] = deviceMode,
+                ["Device:HardwareAvailable"] = deviceMode == DeviceModes.Real ? "true" : "false",
+                ["Device:StartupInitialization:Enabled"] = "false"
             }));
         });
         return new FactoryContext(factory, databasePath);

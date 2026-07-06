@@ -190,6 +190,8 @@ public sealed class DeviceInitializationService(
                         PublishProgress(run, check, commandId);
                     }
 
+                    await AppendReadinessFailuresAsync(run, commandId, cancellationToken);
+
                     var failed = run.Checks.FirstOrDefault(x => x.Status != DeviceInitializationCheckStatus.Succeeded);
                     run.CompletedAtUtc = DateTimeOffset.UtcNow;
                     run.Status = failed is null ? DeviceInitializationStatus.Ready : DeviceInitializationStatus.Failed;
@@ -260,6 +262,11 @@ public sealed class DeviceInitializationService(
         DateTimeOffset startedAtUtc,
         CancellationToken cancellationToken)
     {
+        if (deviceAdapter.Mode == DeviceModes.Real)
+        {
+            return await deviceAdapter.InitializeModuleAsync(request, cancellationToken);
+        }
+
         if (step.ModuleCode == DeviceModules.RobotArm)
         {
             var motionResult = await motionControlService.HomeFromDeviceAsync(request, cancellationToken);
@@ -321,6 +328,90 @@ public sealed class DeviceInitializationService(
         return await deviceAdapter.InitializeModuleAsync(request, cancellationToken);
     }
 
+    private async Task AppendReadinessFailuresAsync(
+        DeviceInitializationRun run,
+        string commandId,
+        CancellationToken cancellationToken)
+    {
+        if (deviceAdapter.Mode != DeviceModes.Mock)
+        {
+            return;
+        }
+
+        var thermal = await thermalControlService.GetReadinessAsync(cancellationToken);
+        if (!thermal.Ok)
+        {
+            AppendSupplementalFailure(
+                run,
+                commandId,
+                ModuleForThermalReadiness(thermal),
+                thermal.ErrorCode ?? "thermal_not_ready",
+                thermal.Message);
+        }
+
+        var fluidics = await fluidicsControlService.GetReadinessAsync(cancellationToken);
+        if (!fluidics.Ok)
+        {
+            AppendSupplementalFailure(
+                run,
+                commandId,
+                ModuleForFluidicsReadiness(fluidics),
+                fluidics.ErrorCode ?? "fluidics_not_ready",
+                fluidics.Message);
+        }
+    }
+
+    private void AppendSupplementalFailure(
+        DeviceInitializationRun run,
+        string commandId,
+        string moduleCode,
+        string errorCode,
+        string message)
+    {
+        if (run.Checks.Any(x =>
+                string.Equals(x.ModuleCode, moduleCode, StringComparison.OrdinalIgnoreCase)
+                && x.Status != DeviceInitializationCheckStatus.Succeeded))
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var check = new DeviceInitializationCheck
+        {
+            DeviceInitializationRun = run,
+            DeviceInitializationRunId = run.Id,
+            StepNo = run.Checks.Count == 0 ? 1 : run.Checks.Max(x => x.StepNo) + 1,
+            ModuleCode = moduleCode,
+            Status = DeviceInitializationCheckStatus.Failed,
+            ErrorCode = errorCode,
+            Message = message,
+            StartedAtUtc = now,
+            CompletedAtUtc = now,
+            ResultJson = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["startupReadinessGate"] = true,
+                ["ready"] = false,
+                ["errorCode"] = errorCode,
+                ["message"] = message
+            }, JsonOptions)
+        };
+        run.Checks.Add(check);
+        PublishProgress(run, check, commandId);
+    }
+
+    private static string ModuleForThermalReadiness(ThermalReadinessResult result) =>
+        string.Equals(result.ErrorCode, "cooling_not_ready", StringComparison.OrdinalIgnoreCase)
+            ? DeviceModules.Cooling
+            : DeviceModules.Temperature;
+
+    private static string ModuleForFluidicsReadiness(FluidicsReadinessResult result) =>
+        result.ErrorCode switch
+        {
+            "pump_not_ready" => DeviceModules.Pump,
+            "mixer_not_ready" => DeviceModules.Mixer,
+            _ => DeviceModules.LiquidLevel
+        };
+
     private async Task<DeviceCommandResult> ExecuteLiquidAvailabilityCheckAsync(
         InitializationStep step,
         DeviceOperationRequest request,
@@ -368,9 +459,17 @@ public sealed class DeviceInitializationService(
                 data);
         }
 
-        return await deviceAdapter.InitializeModuleAsync(
-            request with { Parameters = Merge(request.Parameters, data, new Dictionary<string, object?> { ["fluidicsStateValidated"] = true }) },
-            cancellationToken);
+        return new DeviceCommandResult(
+            true,
+            DeviceCommandStatuses.Succeeded,
+            request.ModuleCode,
+            request.Action,
+            null,
+            $"{sourceType} availability check passed.",
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            true,
+            Merge(request.Parameters, data, new Dictionary<string, object?> { ["fluidicsStateValidated"] = true }));
     }
 
     private static (string SourceType, string ResultKey, bool Ok, string ErrorCode, string Message) CheckSourceAvailable(

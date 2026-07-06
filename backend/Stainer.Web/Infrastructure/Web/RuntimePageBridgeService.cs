@@ -108,7 +108,9 @@ public sealed class RuntimePageBridgeService(
 
     private static MockSystemCheck ToSystemCheck(DeviceInitializationResponse initialization)
     {
-        var checks = initialization.Checks.ToDictionary(x => x.ModuleCode, StringComparer.OrdinalIgnoreCase);
+        var checks = initialization.Checks
+            .GroupBy(x => x.ModuleCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.Last(), StringComparer.OrdinalIgnoreCase);
         var controller = checks.GetValueOrDefault("controller");
         var cooling = checks.GetValueOrDefault("cooling");
         var sampleScanner = checks.GetValueOrDefault("sample-scanner");

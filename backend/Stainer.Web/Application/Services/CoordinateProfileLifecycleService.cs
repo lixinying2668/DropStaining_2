@@ -57,6 +57,19 @@ public sealed class CoordinateProfileLifecycleService(
                 $"Real mode rejects coordinate version {version.VersionLabel}: engineer verification and publication are required before robot movement, liquid detection, aspiration, or dispensing.",
                 StatusCodes.Status409Conflict);
         }
+
+        var points = await dbContext.CoordinatePoints
+            .AsNoTracking()
+            .Where(x => x.CoordinateProfileVersionId == version.Id)
+            .ToListAsync(cancellationToken);
+        var readiness = EvaluateRealReadiness(version, points);
+        if (!readiness.Ok)
+        {
+            throw new BusinessRuleException(
+                "coordinate_version_not_real_ready",
+                readiness.BlockingReasons[0],
+                StatusCodes.Status409Conflict);
+        }
     }
 
     public Task<CoordinateProfileVersionMutationResponse> CreateVersionAsync(
@@ -537,6 +550,121 @@ public sealed class CoordinateProfileLifecycleService(
         }
     }
 
+    private static CoordinateRealReadinessResult EvaluateRealReadiness(
+        CoordinateProfileVersion version,
+        IEnumerable<CoordinatePoint> points)
+    {
+        var label = string.IsNullOrWhiteSpace(version.VersionLabel) ? version.Id : version.VersionLabel;
+        var blocking = new List<string>();
+        var pointByCode = points
+            .Where(x => x.IsEnabled)
+            .GroupBy(x => x.PointCode, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+
+        foreach (var requiredCode in RequiredTargetPointCodes)
+        {
+            if (!pointByCode.TryGetValue(requiredCode, out var point))
+            {
+                blocking.Add($"{label}: {requiredCode} 缺少坐标点，禁止 Real 运动");
+                continue;
+            }
+
+            AddMissingPointReadiness(blocking, label, point);
+        }
+
+        AddMissingVersionReadiness(blocking, label, version.ValidationResultJson);
+        return new CoordinateRealReadinessResult(blocking.Count == 0, blocking);
+    }
+
+    private static void AddMissingPointReadiness(List<string> blocking, string versionLabel, CoordinatePoint point)
+    {
+        if (point.CalibratedXUm is null || point.CalibratedYUm is null)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 缺少 XY 坐标，禁止 Real 运动");
+        }
+
+        if (point.CalibratedZUm is null)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 缺少 Z 高度，禁止 Real 运动");
+        }
+
+        if (point.SafeZUm is null)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 缺少安全高度，禁止 Real 运动");
+        }
+
+        if (point.LiquidDetectZUm is null)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 缺少探液/吸液高度，禁止 Real 运动");
+        }
+
+        if (point.DispenseZUm is null)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 缺少分液高度，禁止 Real 运动");
+        }
+
+        if (point.ActionOffsetXUm is null || point.ActionOffsetYUm is null || point.ActionOffsetZUm is null)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 缺少动作偏移，禁止 Real 运动");
+        }
+
+        if (point.RequiresCalibration || point.ValidationStatus != CoordinateTargetPointValidationStatus.Validated)
+        {
+            blocking.Add($"{versionLabel}: {point.PointCode} 校准验证未通过，禁止 Real 运动");
+        }
+    }
+
+    private static void AddMissingVersionReadiness(List<string> blocking, string versionLabel, string validationResultJson)
+    {
+        var requiredFlags = new (string Name, string Message)[]
+        {
+            ("xyImported", "XY 未导入"),
+            ("requiredHeightsComplete", "必需高度未完整配置"),
+            ("calibrationVerified", "校准验证未通过"),
+            ("safetyParametersComplete", "安全参数未完整配置"),
+            ("speedLimitsConfigured", "速度限制未配置"),
+            ("accelerationLimitsConfigured", "加速度限制未配置"),
+            ("softLimitsConfigured", "软限位未配置")
+        };
+
+        foreach (var (name, message) in requiredFlags)
+        {
+            if (!ReadBooleanFlag(validationResultJson, name))
+            {
+                blocking.Add($"{versionLabel}: {message}，禁止 Real 运动");
+            }
+        }
+    }
+
+    private static bool ReadBooleanFlag(string validationResultJson, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(validationResultJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(validationResultJson);
+            if (!json.RootElement.TryGetProperty(propertyName, out var value))
+            {
+                return false;
+            }
+
+            return value.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.String => bool.TryParse(value.GetString(), out var parsed) && parsed,
+                _ => false
+            };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static IReadOnlyList<string> BuildRequiredTargetPointCodes()
     {
         var codes = new List<string>();
@@ -552,6 +680,10 @@ public sealed class CoordinateProfileLifecycleService(
         codes.AddRange(["DabA", "DabB"]);
         return codes;
     }
+
+    private sealed record CoordinateRealReadinessResult(
+        bool Ok,
+        IReadOnlyList<string> BlockingReasons);
 
     private static CoordinateProfileVersionMutationResponse ToMutationResponse(string commandId, CoordinateProfileVersion version, string message)
     {

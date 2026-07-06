@@ -178,6 +178,20 @@ public static partial class WebHostEndpointExtensions
                 return Results.Ok(await service.ApplyImportAsync(request, actor, cancellationToken));
             }));
 
+        app.MapPost("/api/engineering/coordinates/digital-twin/import/preview", async (HttpContext context, PreviewDigitalTwinCoordinateImportRequest request, UserSessionService sessionService, DigitalTwinCoordinateImportService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.PreviewAsync(request, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/coordinates/digital-twin/import", async (HttpContext context, ApplyDigitalTwinCoordinateImportRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, DigitalTwinCoordinateImportService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason, request.Target ?? $"coordinate-digital-twin:{request.VersionLabel ?? DigitalTwinCoordinateImportService.DefaultVersionLabel}", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.ApplyAsync(request, actor, cancellationToken));
+            }));
+
         app.MapPost("/api/engineering/coordinate-points/calibrate", async (HttpContext context, CalibrateCoordinatePointRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, EngineeringWriteService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

@@ -377,7 +377,9 @@ public sealed class FluidicsControlMockTests
             ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
             ["MachineExecutor:LeasePath"] = Path.Combine(root, $"machine-executor-{Guid.NewGuid():N}.lock"),
             ["Safety:LogDirectory"] = Path.Combine(root, "logs"),
-            ["Device:Mode"] = deviceMode
+            ["Device:Mode"] = deviceMode,
+            ["Device:HardwareAvailable"] = deviceMode == DeviceModes.Real ? "true" : "false",
+            ["Device:StartupInitialization:Enabled"] = "false"
         };
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

@@ -436,14 +436,17 @@ public sealed class MockScannerLisDemoTests
             Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "mock_demo.reset"));
         }
 
-        await using var realFactory = CreateFactory(environment: "Development", deviceMode: DeviceModes.Real);
-        using var realClient = realFactory.CreateClient();
-        await LoginAsync(realClient, "admin", "admin");
-        var realRejected = await realClient.PostAsJsonAsync("/api/mock-demo-data/seed", new
+        await using var developmentRealFactory = CreateFactory(environment: "Development", deviceMode: DeviceModes.Real);
+        using var developmentRealClient = developmentRealFactory.CreateClient();
+        await LoginAsync(developmentRealClient, "admin", "admin");
+        var developmentRealMode = await developmentRealClient.GetFromJsonAsync<DeviceModeStatusResponse>("/api/device-mode");
+        Assert.Equal(DeviceModes.Real, developmentRealMode!.ConfiguredMode);
+        Assert.Equal(DeviceModes.Mock, developmentRealMode.CurrentMode);
+        var developmentRealFallback = await PostJsonAsync<MockDemoDataResponse>(developmentRealClient, "/api/mock-demo-data/seed", new
         {
-            commandId = "cmd-demo-real-rejected"
+            commandId = "cmd-demo-development-real-fallback"
         });
-        Assert.Equal(HttpStatusCode.Conflict, realRejected.StatusCode);
+        Assert.True(developmentRealFallback.Ok);
 
         await using var productionFactory = CreateFactory(environment: "Production");
         using var productionClient = productionFactory.CreateClient();

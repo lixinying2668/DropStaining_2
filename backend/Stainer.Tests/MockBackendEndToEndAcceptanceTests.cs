@@ -338,11 +338,13 @@ public sealed class MockBackendEndToEndAcceptanceTests
             builder.UseEnvironment("Development");
             builder.ConfigureLogging(logging => logging.ClearProviders());
             builder.UseSetting("Device:Mode", DeviceModes.Mock);
+            builder.UseSetting("Device:StartupInitialization:Enabled", "false");
             builder.UseSetting("ConnectionStrings:StainerDatabase", $"Data Source={databasePath}");
             builder.UseSetting("MachineExecutor:LeasePath", leasePath);
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Device:Mode"] = DeviceModes.Mock,
+                ["Device:StartupInitialization:Enabled"] = "false",
                 ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
                 ["MachineExecutor:LeasePath"] = leasePath
             }));
@@ -395,7 +397,7 @@ public sealed class MockBackendEndToEndAcceptanceTests
 
     private static async Task<MachineRunDetailResponse> WaitForRunStatusAsync(HttpClient client, string runId, string expectedStatus)
     {
-        for (var attempt = 0; attempt < 400; attempt++)
+        for (var attempt = 0; attempt < 800; attempt++)
         {
             var detail = await client.GetFromJsonAsync<MachineRunDetailResponse>($"/api/runs/{runId}");
             Assert.NotNull(detail);

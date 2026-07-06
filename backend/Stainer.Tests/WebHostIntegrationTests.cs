@@ -703,7 +703,7 @@ public sealed class WebHostIntegrationTests
         var coordinateProfiles = await client.GetFromJsonAsync<List<CoordinateProfileResponse>>("/api/engineering/coordinate-profiles");
         var factoryDefault = Assert.Single(coordinateProfiles!, x => x.Code == "FactoryDefault-v1");
         Assert.Contains(factoryDefault.Points, x => x.PointCode == "Needle1" && x.PresetXUm == 0 && x.PresetYUm == 0);
-        Assert.Contains(factoryDefault.Points, x => x.PointCode == "Needle2" && x.PresetXUm == 25000 && x.PresetYUm == 0);
+        Assert.Contains(factoryDefault.Points, x => x.PointCode == "Needle2" && x.PresetXUm == 0 && x.PresetYUm == 25000);
 
         var liquidClasses = await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes");
         Assert.Contains(liquidClasses!, x => x.Code == "LC-WEB" && x.AspirateSpeedUlPerSecond == 11);

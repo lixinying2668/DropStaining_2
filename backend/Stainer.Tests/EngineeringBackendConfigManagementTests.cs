@@ -315,10 +315,10 @@ public sealed class EngineeringBackendConfigManagementTests
             await dbContext.SaveChangesAsync();
         }
 
-        var communications = await client.GetFromJsonAsync<TraceabilityListResponse<EngineeringMockCommunicationResponse>>("/api/engineering/diagnostics/mock-communications?moduleCode=controller");
+        var communications = await client.GetFromJsonAsync<TraceabilityListResponse<EngineeringMockCommunicationResponse>>("/api/engineering/diagnostics/mock-communications?moduleCode=controller&pageSize=50");
         Assert.NotNull(communications);
         Assert.True(communications!.TotalCount > 0);
-        Assert.Contains(communications.Items, x => x.CommandId == "cmd-eng-diagnostics-init:controller");
+        Assert.Contains(communications.Items, x => x.CommandId == "cmd-eng-diagnostics-init:step-01:controller");
 
         var pendingCommunications = await client.GetFromJsonAsync<TraceabilityListResponse<EngineeringMockCommunicationResponse>>("/api/engineering/diagnostics/mock-communications?persistenceStatus=Pending");
         var pendingCommunication = Assert.Single(pendingCommunications!.Items, x => x.CommandId == "cmd-eng-diagnostics-pending");
@@ -363,9 +363,11 @@ public sealed class EngineeringBackendConfigManagementTests
         {
             builder.UseEnvironment("Testing");
             builder.UseSetting("ConnectionStrings:StainerDatabase", $"Data Source={databasePath}");
+            builder.UseSetting("Device:StartupInitialization:Enabled", "false");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}"
+                ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
+                ["Device:StartupInitialization:Enabled"] = "false"
             }));
         });
     }

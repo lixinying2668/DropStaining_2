@@ -23,7 +23,7 @@ internal static class CoordinateSnapshotFactory
             version.UsageScope,
             version.VerificationStatus,
             needle1OriginUm = new { x = 0, y = 0 },
-            needle2NominalOffsetUm = new { x = 25000, y = 0 },
+            needle2NominalOffsetUm = new { x = 0, y = 25000 },
             targetPointCount = version.TargetPoints.Count,
             targetPoints = version.TargetPoints
                 .OrderBy(x => x.PointType)

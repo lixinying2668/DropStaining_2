@@ -93,10 +93,10 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal(0, needle1.CalibratedYUm);
 
         var needle2 = profile.CoordinatePoints.Single(x => x.PointCode == "Needle2");
-        Assert.Equal(25000, needle2.PresetXUm);
-        Assert.Equal(0, needle2.PresetYUm);
-        Assert.Equal(25000, needle2.CalibratedXUm);
-        Assert.Equal(0, needle2.CalibratedYUm);
+        Assert.Equal(0, needle2.PresetXUm);
+        Assert.Equal(25000, needle2.PresetYUm);
+        Assert.Equal(0, needle2.CalibratedXUm);
+        Assert.Equal(25000, needle2.CalibratedYUm);
 
         var r1 = profile.CoordinatePoints.Single(x => x.PointCode == "R1");
         Assert.Null(r1.PresetXUm);

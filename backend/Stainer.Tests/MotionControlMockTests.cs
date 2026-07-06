@@ -93,7 +93,7 @@ public sealed class MotionControlMockTests
     }
 
     [Fact]
-    public async Task Dual_needle_synchronizes_only_when_25mm_geometry_and_secondary_target_is_safe()
+    public async Task Dual_needle_keeps_conservative_sequential_execution_even_with_secondary_target()
     {
         var context = CreateFactory();
         await using var factory = context.Factory;
@@ -113,7 +113,7 @@ public sealed class MotionControlMockTests
         Assert.True(synchronized.Ok, synchronized.Message);
         Assert.Contains(
             await dbContext.PipettingOperations.Where(x => x.DeviceCommandExecutionId == "cmd-motion-sync").ToListAsync(),
-            x => x.OperationType == PipettingOperationTypes.Dispense && x.ExecutionMode == PipettingExecutionModes.Synchronized);
+            x => x.OperationType == PipettingOperationTypes.Dispense && x.ExecutionMode == PipettingExecutionModes.Sequential);
 
         var unsafeSecondary = await service.PipetteFromDeviceAsync(PipetteRequest("cmd-motion-unsafe-secondary", "Needle1", "ABC", "A-01", 100, BuildCoordinateSnapshot("coord-motion-unsafe", a02SafeZUm: 300_000), new Dictionary<string, object?>
         {
@@ -516,7 +516,8 @@ public sealed class MotionControlMockTests
             ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
             ["MachineExecutor:LeasePath"] = Path.Combine(root, $"machine-executor-{Guid.NewGuid():N}.lock"),
             ["Safety:LogDirectory"] = Path.Combine(root, "logs"),
-            ["Device:Mode"] = DeviceModes.Mock
+            ["Device:Mode"] = DeviceModes.Mock,
+            ["Device:StartupInitialization:Enabled"] = "false"
         };
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

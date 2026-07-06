@@ -265,3 +265,38 @@ public sealed record EngineeringConfigDiffItemResponse(
     string? Before,
     string? After,
     string ChangeType);
+
+public sealed record DigitalTwinCoordinateImportResponse(
+    bool Ok,
+    bool DryRun,
+    string CommandId,
+    bool Replayed,
+    bool ExistingVersionReused,
+    string ProfileCode,
+    string VersionLabel,
+    string MappingVersion,
+    string SourceFileName,
+    string SourceFileHashSha256,
+    DateTimeOffset? ImportedAtUtc,
+    string? ImportedBy,
+    string? CoordinateProfileVersionId,
+    int TotalRows,
+    int ExecutableTargetCount,
+    int ReferenceOnlyCount,
+    int RejectedCount,
+    IReadOnlyList<DigitalTwinCoordinateRowDispositionResponse> Rows,
+    IReadOnlyList<string> Errors,
+    IReadOnlyList<string> PendingConfiguration,
+    string Message);
+
+public sealed record DigitalTwinCoordinateRowDispositionResponse(
+    int RowNumber,
+    string Category,
+    string CsvName,
+    string? CsvLogicalLabel,
+    string Disposition,
+    string? TargetPointCode,
+    string? PointType,
+    long? MachineXUm,
+    long? MachineYUm,
+    string Reason);

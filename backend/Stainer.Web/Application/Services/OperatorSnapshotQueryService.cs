@@ -401,7 +401,9 @@ public sealed class OperatorSnapshotQueryService(
         ThermalStateResponse thermal,
         FluidicsStateResponse fluidics)
     {
-        var checks = initialization.Checks.ToDictionary(x => x.ModuleCode, StringComparer.OrdinalIgnoreCase);
+        var checks = initialization.Checks
+            .GroupBy(x => x.ModuleCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.Last(), StringComparer.OrdinalIgnoreCase);
         var liquid = checks.GetValueOrDefault("liquid-level");
         var water = fluidics.LiquidLevels.FirstOrDefault(x => x.SourceType.Contains("Water", StringComparison.OrdinalIgnoreCase));
         var pbs = fluidics.LiquidLevels.FirstOrDefault(x => x.SourceType.Contains("PBS", StringComparison.OrdinalIgnoreCase));

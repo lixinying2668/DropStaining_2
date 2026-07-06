@@ -68,9 +68,39 @@ function showEngineeringCommunication(id){
   document.getElementById('engineeringDeviceState').textContent = JSON.stringify(value || {}, null, 2);
 }
 
-function renderCoordinateVersions(){
+function renderCoordinateVersionsLegacy(){
   const rows = engineeringCoordinateProfiles.flatMap(profile => (profile.versions || []).map(version => `<div class="table-row"><span><b>${escapeHtml(profile.code)}</b><small>${escapeHtml(profile.name)}</small></span><span>${escapeHtml(version.versionLabel)}</span><span>${escapeHtml(displayStatusText(version.status))}${version.isActive ? '<small>已启用</small>' : ''}</span><span>${escapeHtml(displayStatusText(version.verificationStatus || '--'))}</span><span class="button-row"><button class="btn btn-soft" onclick="showCoordinateDiff('${version.id}')">差异</button>${version.status === 'Draft' ? `<button class="btn btn-soft" onclick="coordinateVersionAction('${version.id}','publish')">发布</button>` : ''}${version.status === 'Published' && !version.isActive ? `<button class="btn btn-soft" onclick="coordinateVersionAction('${version.id}','activate')">启用</button>` : ''}${version.isActive ? `<button class="btn btn-soft" onclick="coordinateVersionAction('${version.id}','deactivate')">停用</button>` : ''}</span></div>`));
   engineeringTable('coordinateVersionTable', ['配置','版本','状态','验证','操作'], rows, '暂无坐标版本');
+}
+
+function parseEngineeringJson(value){
+  try{ return JSON.parse(value || '{}'); }catch(_){ return {}; }
+}
+
+function coordinateDigitalTwinSummary(version){
+  const summary = parseEngineeringJson(version.changeSummaryJson);
+  const validation = parseEngineeringJson(version.validationResultJson);
+  const source = summary.importKind === 'DigitalTwinCoordinateImport' ? summary.source || {} : null;
+  const targetPoints = version.targetPoints || [];
+  const executable = targetPoints.filter(x => x.isEnabled && x.pointType !== 'ReferenceOnly');
+  const ready = executable.filter(x => x.calibratedXUm != null && x.calibratedYUm != null && x.calibratedZUm != null && x.safeZUm != null && x.aspirateZUm != null && x.dispenseZUm != null && x.actionOffsetXUm != null && x.actionOffsetYUm != null && x.actionOffsetZUm != null && !x.requiresCalibration && x.validationStatus === 'Validated');
+  const realReady = validation.xyImported === true && validation.requiredHeightsComplete === true && validation.calibrationVerified === true && validation.safetyParametersComplete === true && validation.speedLimitsConfigured === true && validation.accelerationLimitsConfigured === true && validation.softLimitsConfigured === true;
+  const sample = (summary.rowDispositions || []).slice(0, 4).map(x => `${x.label || x.csvName || x.row}->${x.target || x.disposition}`).join(', ');
+  return {
+    sourceText: source ? `${source.mappingVersion || 'DigitalTwinXY'} / ${source.fileName || '--'} / ${String(source.sha256 || '').slice(0, 12)}` : 'Legacy / manual',
+    directionText: source ? 'X+ left, Y+ down, CSV mm -> DB um' : '--',
+    completionText: `${ready.length}/${executable.length || targetPoints.length} height+safety complete`,
+    realText: realReady ? 'Real ready' : 'Mock only / Real blocked',
+    mappingText: sample || '--'
+  };
+}
+
+function renderCoordinateVersions(){
+  const rows = engineeringCoordinateProfiles.flatMap(profile => (profile.versions || []).map(version => {
+    const twin = coordinateDigitalTwinSummary(version);
+    return `<div class="table-row"><span><b>${escapeHtml(profile.code)}</b><small>${escapeHtml(profile.name)}</small><small>${escapeHtml(twin.sourceText)}</small></span><span>${escapeHtml(version.versionLabel)}<small>${escapeHtml(twin.directionText)}</small><small>${escapeHtml(twin.mappingText)}</small></span><span>${escapeHtml(displayStatusText(version.status))}${version.isActive ? '<small>Active</small>' : ''}<small>${escapeHtml(twin.completionText)}</small></span><span>${escapeHtml(displayStatusText(version.verificationStatus || '--'))}<small>${escapeHtml(twin.realText)}</small></span><span class="button-row"><button class="btn btn-soft" onclick="showCoordinateDiff('${version.id}')">Diff</button>${version.status === 'Draft' ? `<button class="btn btn-soft" onclick="coordinateVersionAction('${version.id}','publish')">Publish</button>` : ''}${version.status === 'Published' && !version.isActive ? `<button class="btn btn-soft" onclick="coordinateVersionAction('${version.id}','activate')">Activate</button>` : ''}${version.isActive ? `<button class="btn btn-soft" onclick="coordinateVersionAction('${version.id}','deactivate')">Deactivate</button>` : ''}</span></div>`;
+  }));
+  engineeringTable('coordinateVersionTable', ['Profile','Version','Status','Real Gate','Actions'], rows, 'No coordinate versions');
 }
 
 function renderLiquidClassVersions(){

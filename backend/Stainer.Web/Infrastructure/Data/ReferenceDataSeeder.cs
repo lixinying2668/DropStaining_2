@@ -263,7 +263,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
                 Name = "Factory default coordinate profile v1",
                 Status = CoordinateProfileStatus.Enabled,
                 IsActive = true,
-                OriginDefinition = "Needle1 is the innermost needle and defines mechanical origin (0, 0). Needle2 offset is (+25000 um, 0).",
+                OriginDefinition = "Needle1 is the innermost needle and defines mechanical origin (0, 0). Needle2 offset is (0, +25000 um).",
                 CreatedAtUtc = now
             };
             dbContext.CoordinateProfiles.Add(profile);
@@ -302,7 +302,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             ?? (await dbContext.CoordinateProfileVersions.SingleAsync(x => x.CoordinateProfileId == profile.Id && x.IsActive, cancellationToken)).Id;
 
         await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle1", "Needle", 0, 0, false, now, cancellationToken);
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle2", "Needle", 25000, 0, false, now, cancellationToken);
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle2", "Needle", 0, 25000, false, now, cancellationToken);
 
         var slotCodes = await dbContext.PhysicalSlots.Select(x => x.Code).ToListAsync(cancellationToken);
         foreach (var code in slotCodes)

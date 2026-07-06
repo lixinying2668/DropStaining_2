@@ -29,6 +29,22 @@ public sealed record ApplyEngineeringConfigImportRequest(
     string? Target = null,
     bool DangerousOperationConfirmed = false);
 
+public sealed record PreviewDigitalTwinCoordinateImportRequest(
+    string SourceFilePath,
+    string? ProfileCode = null,
+    string? VersionLabel = null,
+    string? MappingVersion = null);
+
+public sealed record ApplyDigitalTwinCoordinateImportRequest(
+    string CommandId,
+    string SourceFilePath,
+    string Reason,
+    string? ProfileCode = null,
+    string? VersionLabel = null,
+    string? MappingVersion = null,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);
+
 public sealed record DeactivateCoordinateProfileVersionRequest(
     string CommandId,
     string Reason,

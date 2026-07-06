@@ -87,6 +87,7 @@ public sealed class PreHardwareSafetyTests
         var context = CreateFactory(new Dictionary<string, string?>
         {
             ["Device:Mode"] = DeviceModes.Real,
+            ["Device:HardwareAvailable"] = "true",
             ["Device:RealHealthCheckComplete"] = "false"
         });
         await using var factory = context.Factory;
@@ -440,6 +441,11 @@ public sealed class PreHardwareSafetyTests
                 builder.UseSetting("MachineExecutor:LeasePath", leasePath);
                 builder.UseSetting("Safety:LogDirectory", logDirectory);
                 builder.UseSetting("Database:BackupDirectory", backupDirectory);
+                foreach (var pair in settings)
+                {
+                    builder.UseSetting(pair.Key, pair.Value);
+                }
+
                 builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
             });
         return new FactoryContext(factory, root, databasePath, logDirectory, backupDirectory);

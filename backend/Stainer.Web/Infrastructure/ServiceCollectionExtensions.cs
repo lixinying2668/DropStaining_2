@@ -78,6 +78,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MockDemoDataSeeder>();
         services.AddScoped<DabLifecycleService>();
         services.AddScoped<CoordinateProfileLifecycleService>();
+        services.AddScoped<DigitalTwinCoordinateImportService>();
         services.AddScoped<EngineeringSessionService>();
         services.AddScoped<EngineeringDiagnosticService>();
         services.AddScoped<DeviceCommunicationPersistenceService>();
