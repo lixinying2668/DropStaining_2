@@ -22,20 +22,19 @@ public sealed class DeviceInitializationService(
 {
     private static readonly SemaphoreSlim InitializationGate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly IReadOnlyList<(string ModuleCode, string Action)> Steps =
+    private static readonly IReadOnlyList<InitializationStep> Steps =
     [
-        (DeviceModules.Controller, "check-connection"),
-        (DeviceModules.Temperature, "check-16-points"),
-        (DeviceModules.Cooling, "check-connection"),
-        (DeviceModules.SampleScanner, "check-connection"),
-        (DeviceModules.ReagentScanner, "check-connection"),
-        (DeviceModules.RobotArm, "home"),
-        (DeviceModules.Needles, "check-empty"),
-        (DeviceModules.Pipette, "check-pipette"),
-        (DeviceModules.Pump, "check-pwm-channels"),
-        (DeviceModules.Mixer, "check-mixer-channels"),
-        (DeviceModules.LiquidLevel, "read-levels"),
-        (DeviceModules.NeedleWash, "prepare")
+        new(DeviceModules.Controller, "connect", "SCDevice.Connect / OpenPort / ConnectEthernet", "SOCON.API V3.1", "第10页（Connect）"),
+        new(DeviceModules.RobotArm, "home", "InitX / InitY / InitZ / InitDevice / CheckHome", "SOCON.API V3.1", "第19-22页"),
+        new(DeviceModules.Cooling, "connect", "FF 00 81 7E / FF 00 82 7D", "制冷串口说明V1.0", "第1页"),
+        new(DeviceModules.SampleScanner, "check-online", "IO状态 / DCR55通信状态检测", "DCR55说明书", "第13-15页"),
+        new(DeviceModules.ReagentScanner, "check-online", "IO状态 / 扫码心跳 / 通信状态", "DCR55说明书", "第13-15页"),
+        new(DeviceModules.LiquidLevel, "read-sensors", "LiqDet / GetIOState / 光耦读取", "SOCON.API V3.1", "第16-25页"),
+        new(DeviceModules.NeedleWash, "prepare", "SOPAReset / SuckMix / Aspirate / Dispense", "SOCON.API V3.1", "第34-35页"),
+        new(DeviceModules.LiquidLevel, "check-system-water", "GetIOState / LiqDet / 光耦输入", "SOCON.API V3.1", "第16页"),
+        new(DeviceModules.LiquidLevel, "check-pbs", "GetIOState / LiqDet / IO液位检测", "SOCON.API V3.1", "第16页"),
+        new(DeviceModules.LiquidLevel, "check-waste-not-full", "GetIOState / IO液位开关", "SOCON.API V3.1", "第16页"),
+        new(DeviceModules.LiquidLevel, "check-toxic-waste-not-full", "GetIOState / IO输入检测", "SOCON.API V3.1", "第16页")
     ];
 
     public async Task<DeviceInitializationResponse> GetLatestAsync(CancellationToken cancellationToken = default)
@@ -143,7 +142,7 @@ public sealed class DeviceInitializationService(
                         AdapterName = deviceAdapter.Name,
                         AttemptNo = retryOf is null ? 1 : retryOf.AttemptNo + 1,
                         RetryOfRunId = retryOf?.Id,
-                        RequestedByUserId = actor.UserId,
+                        RequestedByUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,
                         StartedAtUtc = now,
                         CreatedAtUtc = now
                     };
@@ -164,81 +163,24 @@ public sealed class DeviceInitializationService(
                         check.Status = DeviceInitializationCheckStatus.Running;
                         check.StartedAtUtc = DateTimeOffset.UtcNow;
                         PublishProgress(run, check, commandId);
-                        var parameters = new Dictionary<string, object?>();
-                        ThermalDeviceResult? thermalResult = null;
-                        if (check.ModuleCode is DeviceModules.Temperature or DeviceModules.Cooling)
-                        {
-                            thermalResult = await thermalControlService.InitializeModuleAsync(check.ModuleCode, cancellationToken);
-                            foreach (var pair in thermalResult.Data)
-                            {
-                                parameters[pair.Key] = pair.Value;
-                            }
-                            parameters["thermalStateValidated"] = thermalResult.Ok;
-                        }
-                        FluidicsDeviceResult? fluidicsResult = null;
-                        if (check.ModuleCode is DeviceModules.Pump or DeviceModules.Mixer or DeviceModules.LiquidLevel)
-                        {
-                            fluidicsResult = await fluidicsControlService.InitializeModuleAsync(check.ModuleCode, cancellationToken);
-                            foreach (var pair in fluidicsResult.Data)
-                            {
-                                parameters[pair.Key] = pair.Value;
-                            }
-                            parameters["fluidicsStateValidated"] = fluidicsResult.Ok;
-                        }
-                        MotionDeviceResult? motionResult = null;
-                        if (check.ModuleCode is DeviceModules.RobotArm or DeviceModules.Needles or DeviceModules.Pipette or DeviceModules.NeedleWash)
-                        {
-                            motionResult = await motionControlService.InitializeModuleAsync(check.ModuleCode, cancellationToken);
-                            foreach (var pair in motionResult.Data)
-                            {
-                                parameters[pair.Key] = pair.Value;
-                            }
-                            parameters["motionStateValidated"] = motionResult.Ok;
-                        }
 
                         var operationRequest = new DeviceOperationRequest(
-                            new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
+                            new DeviceCommandContext($"{commandId}:step-{check.StepNo:00}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
                             check.ModuleCode,
                             step.Action,
-                            parameters);
+                            CreateStepParameters(step));
                         var communicationRecord = communicationPersistence.Begin(operationRequest);
-                        var result = thermalResult is { Ok: false }
-                            ? new DeviceCommandResult(
-                                false,
-                                thermalResult.Status,
-                                check.ModuleCode,
-                                step.Action,
-                                thermalResult.ErrorCode,
-                                thermalResult.Message,
-                                check.StartedAtUtc.Value,
-                                DateTimeOffset.UtcNow,
-                                thermalResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
-                                thermalResult.Data)
-                            : fluidicsResult is { Ok: false }
-                            ? new DeviceCommandResult(
-                                false,
-                                fluidicsResult.Status,
-                                check.ModuleCode,
-                                step.Action,
-                                fluidicsResult.ErrorCode,
-                                fluidicsResult.Message,
-                                check.StartedAtUtc.Value,
-                                DateTimeOffset.UtcNow,
-                                fluidicsResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
-                                fluidicsResult.Data)
-                            : motionResult is { Ok: false }
-                            ? new DeviceCommandResult(
-                                false,
-                                motionResult.Status,
-                                check.ModuleCode,
-                                step.Action,
-                                motionResult.ErrorCode,
-                                motionResult.Message,
-                                check.StartedAtUtc.Value,
-                                DateTimeOffset.UtcNow,
-                                motionResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
-                                motionResult.Data)
-                            : await deviceAdapter.InitializeModuleAsync(operationRequest, cancellationToken);
+                        DeviceCommandResult result;
+                        try
+                        {
+                            result = await ExecuteStepAsync(step, operationRequest, check.StartedAtUtc.Value, cancellationToken);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                        {
+                            result = ExceptionResult(operationRequest, check.StartedAtUtc.Value, ex);
+                        }
+
+                        result = result with { Data = Merge(operationRequest.Parameters, result.Data) };
                         communicationPersistence.Complete(communicationRecord, result);
                         check.Status = MapCheckStatus(result.Status);
                         check.ErrorCode = result.ErrorCode;
@@ -269,7 +211,7 @@ public sealed class DeviceInitializationService(
 
                     dbContext.AuditLogs.Add(new AuditLog
                     {
-                        ActorUserId = actor.UserId,
+                        ActorUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,
                         Action = failed is null ? "device.initialization.completed" : "device.initialization.failed",
                         EntityType = "DeviceInitializationRun",
                         EntityId = run.Id,
@@ -310,6 +252,263 @@ public sealed class DeviceInitializationService(
         {
             InitializationGate.Release();
         }
+    }
+
+    private async Task<DeviceCommandResult> ExecuteStepAsync(
+        InitializationStep step,
+        DeviceOperationRequest request,
+        DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (step.ModuleCode == DeviceModules.RobotArm)
+        {
+            var motionResult = await motionControlService.HomeFromDeviceAsync(request, cancellationToken);
+            if (!motionResult.Ok)
+            {
+                return FromMotionResult(request, motionResult, startedAtUtc);
+            }
+
+            return await deviceAdapter.InitializeModuleAsync(
+                request with { Parameters = Merge(request.Parameters, motionResult.Data, new Dictionary<string, object?> { ["motionStateValidated"] = true }) },
+                cancellationToken);
+        }
+
+        if (step.ModuleCode == DeviceModules.NeedleWash)
+        {
+            var motionResult = await motionControlService.WashNeedlesFromDeviceAsync(request, cancellationToken);
+            if (!motionResult.Ok)
+            {
+                return FromMotionResult(request, motionResult, startedAtUtc);
+            }
+
+            return await deviceAdapter.InitializeModuleAsync(
+                request with { Parameters = Merge(request.Parameters, motionResult.Data, new Dictionary<string, object?> { ["motionStateValidated"] = true }) },
+                cancellationToken);
+        }
+
+        if (step.ModuleCode == DeviceModules.Cooling)
+        {
+            var thermalResult = await thermalControlService.InitializeModuleAsync(DeviceModules.Cooling, cancellationToken);
+            var data = Merge(thermalResult.Data, MockCoolingDefaults());
+            if (!thermalResult.Ok)
+            {
+                return FromThermalResult(request, thermalResult with { Data = data }, startedAtUtc);
+            }
+
+            return await deviceAdapter.InitializeModuleAsync(
+                request with { Parameters = Merge(request.Parameters, data, new Dictionary<string, object?> { ["thermalStateValidated"] = true }) },
+                cancellationToken);
+        }
+
+        if (step.ModuleCode == DeviceModules.LiquidLevel && step.Action == "read-sensors")
+        {
+            var fluidicsResult = await fluidicsControlService.ReadLiquidLevelsFromDeviceAsync(request, cancellationToken);
+            if (!fluidicsResult.Ok)
+            {
+                return FromFluidicsResult(request, fluidicsResult, startedAtUtc);
+            }
+
+            return await deviceAdapter.InitializeModuleAsync(
+                request with { Parameters = Merge(request.Parameters, fluidicsResult.Data, new Dictionary<string, object?> { ["fluidicsStateValidated"] = true }) },
+                cancellationToken);
+        }
+
+        if (step.ModuleCode == DeviceModules.LiquidLevel)
+        {
+            return await ExecuteLiquidAvailabilityCheckAsync(step, request, startedAtUtc, cancellationToken);
+        }
+
+        return await deviceAdapter.InitializeModuleAsync(request, cancellationToken);
+    }
+
+    private async Task<DeviceCommandResult> ExecuteLiquidAvailabilityCheckAsync(
+        InitializationStep step,
+        DeviceOperationRequest request,
+        DateTimeOffset startedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var state = await fluidicsControlService.GetStateAsync(cancellationToken);
+        var (sourceType, resultKey, ok, errorCode, message) = step.Action switch
+        {
+            "check-system-water" => CheckSourceAvailable(state, LiquidSourceTypes.SystemWater, "systemWaterAvailable", "pure_water_unavailable", "System water is unavailable."),
+            "check-pbs" => CheckSourceAvailable(state, LiquidSourceTypes.Pbs, "pbsAvailable", "pbs_unavailable", "PBS is unavailable."),
+            "check-waste-not-full" => CheckWasteNotFull(state, LiquidSourceTypes.Waste, "wasteNotFull", "waste_full", "Waste tank is full."),
+            "check-toxic-waste-not-full" => CheckWasteNotFull(state, LiquidSourceTypes.ToxicWaste, "toxicWasteNotFull", "toxic_waste_full", "Toxic waste tank is full."),
+            _ => (string.Empty, "ok", false, "liquid_check_invalid", "Unsupported liquid availability check.")
+        };
+        var data = new Dictionary<string, object?>
+        {
+            ["sourceType"] = sourceType,
+            [resultKey] = ok,
+            ["ioStateNormal"] = ok,
+            ["sensorInputsNormal"] = ok,
+            ["containers"] = state.LiquidLevels.Select(x => new Dictionary<string, object?>
+            {
+                ["sourceType"] = x.SourceType,
+                ["levelStatus"] = x.LevelStatus,
+                ["isConnected"] = x.IsConnected,
+                ["faultCode"] = x.FaultCode,
+                ["currentVolumeUl"] = x.CurrentVolumeUl,
+                ["capacityUl"] = x.CapacityUl
+            }).ToList()
+        };
+
+        if (!ok)
+        {
+            return new DeviceCommandResult(
+                false,
+                DeviceCommandStatuses.Failed,
+                request.ModuleCode,
+                request.Action,
+                errorCode,
+                message,
+                startedAtUtc,
+                DateTimeOffset.UtcNow,
+                true,
+                data);
+        }
+
+        return await deviceAdapter.InitializeModuleAsync(
+            request with { Parameters = Merge(request.Parameters, data, new Dictionary<string, object?> { ["fluidicsStateValidated"] = true }) },
+            cancellationToken);
+    }
+
+    private static (string SourceType, string ResultKey, bool Ok, string ErrorCode, string Message) CheckSourceAvailable(
+        FluidicsStateResponse state,
+        string sourceType,
+        string resultKey,
+        string errorCode,
+        string message)
+    {
+        var source = state.LiquidLevels.SingleOrDefault(x => string.Equals(x.SourceType, sourceType, StringComparison.OrdinalIgnoreCase));
+        var ok = source is not null
+            && source.IsConnected
+            && source.FaultCode is null
+            && source.LevelStatus == LiquidLevelStatuses.Normal;
+        return (sourceType, resultKey, ok, errorCode, source is null ? $"{sourceType} level source was not found." : message);
+    }
+
+    private static (string SourceType, string ResultKey, bool Ok, string ErrorCode, string Message) CheckWasteNotFull(
+        FluidicsStateResponse state,
+        string sourceType,
+        string resultKey,
+        string errorCode,
+        string message)
+    {
+        var source = state.LiquidLevels.SingleOrDefault(x => string.Equals(x.SourceType, sourceType, StringComparison.OrdinalIgnoreCase));
+        var ok = source is not null
+            && source.IsConnected
+            && source.FaultCode is null
+            && source.LevelStatus != LiquidLevelStatuses.Full
+            && source.LevelStatus != LiquidLevelStatuses.SensorFault
+            && source.LevelStatus != LiquidLevelStatuses.Disconnected;
+        return (sourceType, resultKey, ok, errorCode, source is null ? $"{sourceType} level source was not found." : message);
+    }
+
+    private static DeviceCommandResult FromThermalResult(DeviceOperationRequest request, ThermalDeviceResult result, DateTimeOffset startedAtUtc) =>
+        new(
+            result.Ok,
+            result.Status,
+            request.ModuleCode,
+            request.Action,
+            result.ErrorCode,
+            result.Message,
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            result.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+            result.Data);
+
+    private static DeviceCommandResult FromFluidicsResult(DeviceOperationRequest request, FluidicsDeviceResult result, DateTimeOffset startedAtUtc) =>
+        new(
+            result.Ok,
+            result.Status,
+            request.ModuleCode,
+            request.Action,
+            result.ErrorCode,
+            result.Message,
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            result.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+            result.Data);
+
+    private static DeviceCommandResult FromMotionResult(DeviceOperationRequest request, MotionDeviceResult result, DateTimeOffset startedAtUtc) =>
+        new(
+            result.Ok,
+            result.Status,
+            request.ModuleCode,
+            request.Action,
+            result.ErrorCode,
+            result.Message,
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            result.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+            result.Data);
+
+    private static DeviceCommandResult ExceptionResult(DeviceOperationRequest request, DateTimeOffset startedAtUtc, Exception exception)
+    {
+        var code = exception is BusinessRuleException businessRule ? businessRule.Code : "device_initialization_step_exception";
+        return new DeviceCommandResult(
+            false,
+            DeviceCommandStatuses.Failed,
+            request.ModuleCode,
+            request.Action,
+            code,
+            exception.Message,
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            true,
+            new Dictionary<string, object?>
+            {
+                ["exceptionType"] = exception.GetType().Name
+            });
+    }
+
+    private static IReadOnlyDictionary<string, object?> CreateStepParameters(InitializationStep step)
+    {
+        var parameters = new Dictionary<string, object?>
+        {
+            ["startupLifecycleStep"] = true,
+            ["requiredInterface"] = step.Interface,
+            ["documentSource"] = step.DocumentSource,
+            ["pageReference"] = step.PageReference
+        };
+
+        if (step.ModuleCode == DeviceModules.SampleScanner || step.ModuleCode == DeviceModules.ReagentScanner)
+        {
+            parameters["online"] = true;
+            parameters["communicationOk"] = true;
+        }
+
+        if (step.ModuleCode == DeviceModules.LiquidLevel)
+        {
+            parameters["ioStateNormal"] = true;
+            parameters["sensorInputsNormal"] = true;
+        }
+
+        return parameters;
+    }
+
+    private static IReadOnlyDictionary<string, object?> MockCoolingDefaults() =>
+        new Dictionary<string, object?>
+        {
+            ["mockFixedTemperatureC"] = 5,
+            ["currentTemperatureDeciC"] = 50,
+            ["currentTemperatureC"] = 5,
+            ["coolingSerialCommand"] = "FF 00 81 7E / FF 00 82 7D"
+        };
+
+    private static IReadOnlyDictionary<string, object?> Merge(params IReadOnlyDictionary<string, object?>[] dictionaries)
+    {
+        var merged = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dictionary in dictionaries)
+        {
+            foreach (var pair in dictionary)
+            {
+                merged[pair.Key] = pair.Value;
+            }
+        }
+
+        return merged;
     }
 
     private static string MapCheckStatus(string adapterStatus)
@@ -405,4 +604,11 @@ public sealed class DeviceInitializationService(
                 ["message"] = run.Message
             }));
     }
+
+    private sealed record InitializationStep(
+        string ModuleCode,
+        string Action,
+        string Interface,
+        string DocumentSource,
+        string PageReference);
 }

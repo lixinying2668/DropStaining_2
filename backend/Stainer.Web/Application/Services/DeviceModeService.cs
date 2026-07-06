@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Requests;
 using Stainer.Web.Domain.Entities;
@@ -10,13 +11,16 @@ namespace Stainer.Web.Application.Services;
 
 public sealed class DeviceModeService(
     IConfiguration configuration,
+    IDeviceAdapter deviceAdapter,
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
     SafetyLogWriter safetyLogWriter)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public string CurrentMode => DeviceModes.Normalize(configuration["Device:Mode"]);
+    public string CurrentMode => deviceAdapter.Mode;
+
+    public string ConfiguredMode => DeviceModes.Normalize(configuration["Device:Mode"]);
 
     public bool RealDeviceHealthCheckComplete => bool.TryParse(configuration["Device:RealHealthCheckComplete"], out var value) && value;
 
@@ -30,19 +34,22 @@ public sealed class DeviceModeService(
     {
         var pendingRequestedMode = await LatestRequestedModeAsync(cancellationToken);
         var mode = CurrentMode;
+        var configuredMode = ConfiguredMode;
         var realHealthOk = RealDeviceHealthCheckComplete;
         return new DeviceModeStatusResponse(
             mode,
-            mode,
+            configuredMode,
             mode == DeviceModes.Mock,
             mode == DeviceModes.Real,
             realHealthOk,
             mode == DeviceModes.Mock || realHealthOk,
             true,
             pendingRequestedMode,
-            "Configuration",
+            configuredMode == mode ? "Configuration" : deviceAdapter.Name,
             mode == DeviceModes.Real && !realHealthOk
                 ? "Real mode is configured, but device health check has not completed. Run start is blocked."
+                : configuredMode != mode
+                ? $"Configured DeviceMode is {configuredMode}, effective mode is {mode} through {deviceAdapter.Name}."
                 : $"Device mode is {mode}.");
     }
 
@@ -70,7 +77,7 @@ public sealed class DeviceModeService(
                     throw new BusinessRuleException("reason_required", "Changing DeviceMode requires a reason.", StatusCodes.Status400BadRequest);
                 }
 
-                var currentMode = CurrentMode;
+                var currentMode = ConfiguredMode;
                 dbContext.AuditLogs.Add(new AuditLog
                 {
                     ActorUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,

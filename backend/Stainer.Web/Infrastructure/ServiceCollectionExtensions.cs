@@ -20,7 +20,7 @@ public static class ServiceCollectionExtensions
         services.AddPersistenceServices(connectionString);
         services.AddRepositoryServices();
         services.AddApplicationServices();
-        services.AddDeviceServices(configuration);
+        services.AddDeviceServices(configuration, environment);
         services.AddRuntimeMessagingServices();
         services.AddHostedRuntimeServices();
         services.AddSignalR();
@@ -95,6 +95,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<MotionControlService>();
         services.AddScoped<DeviceInitializationService>();
+        services.AddSingleton<StartupDeviceInitializationRunner>();
         services.AddScoped<StartupRecoveryService>();
         services.AddScoped<DatabaseMaintenanceService>();
         services.AddScoped<PreHardwareReadinessService>();
@@ -105,20 +106,28 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    private static IServiceCollection AddDeviceServices(this IServiceCollection services, IConfiguration configuration)
+    private static IServiceCollection AddDeviceServices(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         services.AddSingleton<MockDeviceStateStore>();
-        if (DeviceModes.Normalize(configuration["Device:Mode"]) == DeviceModes.Real)
+        var requestedMode = DeviceModes.Normalize(configuration["Device:Mode"]);
+        var debugMode = IsEnabled(configuration["Device:DebugMode"]) || environment.IsDevelopment();
+        var hardwareAvailable = IsEnabled(configuration["Device:HardwareAvailable"]);
+        var useMockFallback = !bool.TryParse(configuration["Device:UseMockWhenHardwareUnavailable"], out var configuredFallback)
+            || configuredFallback;
+        if (requestedMode != DeviceModes.Real || debugMode || (!hardwareAvailable && useMockFallback))
         {
-            services.AddSingleton<IDeviceAdapter, UnavailableRealDeviceAdapter>();
+            services.AddSingleton<IDeviceAdapter, MockDeviceOperations>();
         }
         else
         {
-            services.AddSingleton<IDeviceAdapter, MockDeviceAdapter>();
+            services.AddSingleton<IDeviceAdapter, UnavailableRealDeviceAdapter>();
         }
 
         return services;
     }
+
+    private static bool IsEnabled(string? value) =>
+        bool.TryParse(value, out var enabled) && enabled;
 
     private static IServiceCollection AddRuntimeMessagingServices(this IServiceCollection services)
     {
@@ -131,6 +140,7 @@ public static class ServiceCollectionExtensions
 
     private static IServiceCollection AddHostedRuntimeServices(this IServiceCollection services)
     {
+        services.AddHostedService<StartupDeviceInitializationHostedService>();
         services.AddHostedService<MachineExecutorHostedService>();
         services.AddHostedService<DabExpiryHostedService>();
         services.AddHostedService<MachineEventSignalRDispatcher>();

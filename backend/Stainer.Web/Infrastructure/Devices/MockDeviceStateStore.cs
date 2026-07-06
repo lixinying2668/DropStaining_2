@@ -8,15 +8,10 @@ public sealed class MockDeviceStateStore
     private static readonly IReadOnlySet<string> RequiredReadyModules = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         DeviceModules.Controller,
-        DeviceModules.Temperature,
         DeviceModules.Cooling,
         DeviceModules.SampleScanner,
         DeviceModules.ReagentScanner,
         DeviceModules.RobotArm,
-        DeviceModules.Needles,
-        DeviceModules.Pipette,
-        DeviceModules.Pump,
-        DeviceModules.Mixer,
         DeviceModules.LiquidLevel,
         DeviceModules.NeedleWash
     };

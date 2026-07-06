@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -85,11 +86,20 @@ public sealed class DeviceAdapterInitializationTests
         await using (var scope = mockFactory.Services.CreateAsyncScope())
         {
             var adapter = scope.ServiceProvider.GetRequiredService<IDeviceAdapter>();
-            Assert.IsType<MockDeviceAdapter>(adapter);
+            Assert.IsType<MockDeviceOperations>(adapter);
             Assert.Equal(DeviceModes.Mock, adapter.Mode);
         }
 
-        var realContext = CreateFactory(deviceMode: DeviceModes.Real);
+        var fallbackContext = CreateFactory(deviceMode: DeviceModes.Real);
+        await using (var fallbackFactory = fallbackContext.Factory)
+        await using (var scope = fallbackFactory.Services.CreateAsyncScope())
+        {
+            var adapter = scope.ServiceProvider.GetRequiredService<IDeviceAdapter>();
+            Assert.IsType<MockDeviceOperations>(adapter);
+            Assert.Equal(DeviceModes.Mock, adapter.Mode);
+        }
+
+        var realContext = CreateFactory(deviceMode: DeviceModes.Real, hardwareAvailable: true);
         await using (var realFactory = realContext.Factory)
         await using (var scope = realFactory.Services.CreateAsyncScope())
         {
@@ -120,8 +130,23 @@ public sealed class DeviceAdapterInitializationTests
         Assert.True(initialized.Ok, initialized.Message);
         Assert.False(initialized.Replayed);
         Assert.Equal(DeviceInitializationStatus.Ready, initialized.Status);
-        Assert.Equal(12, initialized.Checks.Count);
+        Assert.Equal(11, initialized.Checks.Count);
+        Assert.Equal(new[]
+        {
+            DeviceModules.Controller,
+            DeviceModules.RobotArm,
+            DeviceModules.Cooling,
+            DeviceModules.SampleScanner,
+            DeviceModules.ReagentScanner,
+            DeviceModules.LiquidLevel,
+            DeviceModules.NeedleWash,
+            DeviceModules.LiquidLevel,
+            DeviceModules.LiquidLevel,
+            DeviceModules.LiquidLevel,
+            DeviceModules.LiquidLevel
+        }, initialized.Checks.OrderBy(x => x.StepNo).Select(x => x.ModuleCode));
         Assert.All(initialized.Checks, check => Assert.Equal(DeviceInitializationCheckStatus.Succeeded, check.Status));
+        Assert.Contains(initialized.Checks, x => x.ModuleCode == DeviceModules.Cooling && Convert.ToString(x.Result["currentTemperatureC"]) == "5");
 
         var replayed = await PostJsonAsync<DeviceInitializationResponse>(client, "/api/device-initialization", request);
         Assert.True(replayed.Replayed);
@@ -145,7 +170,7 @@ public sealed class DeviceAdapterInitializationTests
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.Equal(1, await dbContext.DeviceInitializationRuns.CountAsync(x => x.CommandId == request.commandId));
-        Assert.Equal(12, await dbContext.DeviceInitializationChecks.CountAsync(x => x.DeviceInitializationRunId == initialized.RunId));
+        Assert.Equal(11, await dbContext.DeviceInitializationChecks.CountAsync(x => x.DeviceInitializationRunId == initialized.RunId));
         Assert.Equal(1, await dbContext.CommandReceipts.CountAsync(x => x.CommandId == request.commandId));
         Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "device.initialization.completed" && x.EntityId == initialized.RunId));
 
@@ -193,6 +218,9 @@ public sealed class DeviceAdapterInitializationTests
         });
         Assert.False(failed.Ok);
         Assert.Equal(DeviceInitializationStatus.Failed, failed.Status);
+        Assert.Equal(11, failed.Checks.Count);
+        Assert.All(failed.Checks, check => Assert.NotEqual(DeviceInitializationCheckStatus.Pending, check.Status));
+        Assert.All(failed.Checks, check => Assert.NotEqual(DeviceInitializationCheckStatus.Running, check.Status));
         Assert.Contains(failed.Checks, x => x.ModuleCode == DeviceModules.Controller && x.Status == DeviceInitializationCheckStatus.TimedOut);
 
         var missingReason = await adminClient.PostAsJsonAsync($"/api/device-initialization/{failed.RunId}/retry", new
@@ -259,7 +287,28 @@ public sealed class DeviceAdapterInitializationTests
         Assert.True(latest!.Ok);
         Assert.Equal(runId, latest.RunId);
         Assert.Equal(DeviceInitializationStatus.Ready, latest.Status);
-        Assert.Equal(12, latest.Checks.Count);
+        Assert.Equal(11, latest.Checks.Count);
+    }
+
+    [Fact]
+    public async Task Startup_lifecycle_runs_in_background_and_sets_system_ready()
+    {
+        var context = CreateFactory(startupInitializationEnabled: true);
+        await using var factory = context.Factory;
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        var latest = await WaitForStartupInitializationAsync(client);
+        Assert.True(latest.Ok, latest.Message);
+        Assert.StartsWith("startup-device-initialization-", latest.CommandId);
+        Assert.Equal(DeviceInitializationStatus.Ready, latest.Status);
+        Assert.Equal(11, latest.Checks.Count);
+        Assert.All(latest.Checks, check => Assert.Equal(DeviceInitializationCheckStatus.Succeeded, check.Status));
+
+        var state = await client.GetFromJsonAsync<DeviceStatusSnapshot>("/api/device/state");
+        Assert.NotNull(state);
+        Assert.True(state!.Ready);
+        Assert.Equal(nameof(MockDeviceOperations), state.AdapterName);
     }
 
     private static DeviceOperationRequest Request(string moduleCode, string action)
@@ -271,7 +320,11 @@ public sealed class DeviceAdapterInitializationTests
             new Dictionary<string, object?>());
     }
 
-    private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock)
+    private static FactoryContext CreateFactory(
+        string? databasePath = null,
+        string deviceMode = DeviceModes.Mock,
+        bool hardwareAvailable = false,
+        bool startupInitializationEnabled = false)
     {
         var root = databasePath is null
             ? Path.Combine(Path.GetTempPath(), "stainer-device-adapter-tests", Guid.NewGuid().ToString("N"))
@@ -285,7 +338,9 @@ public sealed class DeviceAdapterInitializationTests
             ["MachineExecutor:LeasePath"] = leasePath,
             ["Safety:LogDirectory"] = logDirectory,
             ["Device:Mode"] = deviceMode,
-            ["Device:RealHealthCheckComplete"] = "false"
+            ["Device:RealHealthCheckComplete"] = "false",
+            ["Device:HardwareAvailable"] = hardwareAvailable ? "true" : "false",
+            ["Device:StartupInitialization:Enabled"] = startupInitializationEnabled ? "true" : "false"
         };
         var factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
@@ -296,6 +351,8 @@ public sealed class DeviceAdapterInitializationTests
                 builder.UseSetting("Safety:LogDirectory", logDirectory);
                 builder.UseSetting("Device:Mode", deviceMode);
                 builder.UseSetting("Device:RealHealthCheckComplete", "false");
+                builder.UseSetting("Device:HardwareAvailable", hardwareAvailable ? "true" : "false");
+                builder.UseSetting("Device:StartupInitialization:Enabled", startupInitializationEnabled ? "true" : "false");
                 builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
             });
         return new FactoryContext(factory, databasePath);
@@ -319,6 +376,25 @@ public sealed class DeviceAdapterInitializationTests
         var body = await response.Content.ReadFromJsonAsync<T>();
         Assert.NotNull(body);
         return body!;
+    }
+
+    private static async Task<DeviceInitializationResponse> WaitForStartupInitializationAsync(HttpClient client)
+    {
+        for (var i = 0; i < 80; i++)
+        {
+            var latest = await client.GetFromJsonAsync<DeviceInitializationResponse>("/api/device-initialization");
+            Assert.NotNull(latest);
+            if (latest!.Status == DeviceInitializationStatus.Ready)
+            {
+                return latest;
+            }
+
+            await Task.Delay(50);
+        }
+
+        var final = await client.GetFromJsonAsync<DeviceInitializationResponse>("/api/device-initialization");
+        Assert.Fail($"Startup initialization did not reach Ready; final status was {final?.Status}: {final?.Message}");
+        throw new UnreachableException();
     }
 
     private sealed record FactoryContext(WebApplicationFactory<Program> Factory, string DatabasePath);

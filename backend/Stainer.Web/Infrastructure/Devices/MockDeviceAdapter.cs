@@ -5,14 +5,14 @@ using Stainer.Web.Domain.Entities;
 
 namespace Stainer.Web.Infrastructure.Devices;
 
-public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFactory? scopeFactory = null) : IDeviceAdapter
+public class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFactory? scopeFactory = null) : IDeviceAdapter
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan CommandDelay = TimeSpan.FromMilliseconds(5);
 
-    public string Mode => DeviceModes.Mock;
+    public virtual string Mode => DeviceModes.Mock;
 
-    public string Name => nameof(MockDeviceAdapter);
+    public virtual string Name => nameof(MockDeviceAdapter);
 
     public async Task<DeviceStatusSnapshot> GetStatusAsync(CancellationToken cancellationToken = default)
     {
@@ -22,12 +22,12 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
             await SyncMotionModulesAsync(cancellationToken);
         }
 
-        return stateStore.Snapshot();
+        return WithAdapterName(stateStore.Snapshot());
     }
 
     public async Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
     {
-        var snapshot = stateStore.Snapshot();
+        var snapshot = await GetStatusAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
         return await Task.FromResult(new DeviceCommandResult(
             snapshot.Ready,
@@ -159,15 +159,22 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceS
 
     public Task<DeviceFaultControlResult> ConfigureFaultAsync(DeviceFaultCommand command, CancellationToken cancellationToken = default)
     {
-        var state = stateStore.ConfigureFault(command);
+        var state = WithAdapterName(stateStore.ConfigureFault(command));
         return Task.FromResult(new DeviceFaultControlResult(true, $"Mock fault {command.FaultType} configured for {command.ModuleCode}.", state));
     }
 
     public Task<DeviceFaultControlResult> ClearFaultsAsync(DeviceFaultClearCommand command, CancellationToken cancellationToken = default)
     {
-        var state = stateStore.ClearFaults(command);
+        var state = WithAdapterName(stateStore.ClearFaults(command));
         return Task.FromResult(new DeviceFaultControlResult(true, "Mock fault plan cleared and module availability restored.", state));
     }
+
+    private DeviceStatusSnapshot WithAdapterName(DeviceStatusSnapshot snapshot) =>
+        snapshot with
+        {
+            Mode = Mode,
+            AdapterName = Name
+        };
 
     private async Task<DeviceCommandResult> ExecuteAsync(
         DeviceOperationRequest request,

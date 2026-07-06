@@ -127,6 +127,9 @@ using (var scope = app.Services.CreateScope())
     await recovery.RecoverAsync();
 }
 
+app.Services.GetRequiredService<StartupDeviceInitializationRunner>()
+    .Start(app.Lifetime.ApplicationStopping);
+
 app.Run();
 
 static string FormatDefaultWorkflow(WorkflowVersion? version)
