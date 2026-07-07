@@ -120,3 +120,8 @@ work/verify-empty-sqlite-*/
 tmp-*.log
 coordinate-empty-*.db*
 data/communication-patch-migration.db*
+
+# SOCON bridge local-only files
+/bridges/Stainer.SoconBridge/SoconBridge.config.local.json
+/bridges/Stainer.SoconBridge/bin/
+/bridges/Stainer.SoconBridge/obj/
