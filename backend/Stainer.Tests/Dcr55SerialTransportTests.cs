@@ -171,7 +171,9 @@ public sealed class Dcr55SerialTransportTests
         public int DataBits { get; set; }
         public Parity Parity { get; set; }
         public StopBits StopBits { get; set; }
+        public Handshake Handshake { get; set; }
         public int ReadTimeout { get; set; }
+        public int WriteTimeout { get; set; }
         public bool IsOpen { get; private set; }
         public int BytesToRead => response.Count;
         public List<byte[]> WriteCalls { get; } = [];

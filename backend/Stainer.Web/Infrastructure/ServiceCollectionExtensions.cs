@@ -127,13 +127,30 @@ public static class ServiceCollectionExtensions
                 .Get<Dcr55ConnectionOptions>() ?? new Dcr55ConnectionOptions();
             services.AddSingleton(dcr55Configuration);
 
-            // DCR55-02：在 Real 模式下注册真实串口 Transport。
-            // SerialPort 仅存在于 Dcr55SerialTransport（Transport 层），
+            // P1-03-01：主控（Main Controller）串口连接配置。
+            // 串口参数全部来自配置（appsettings 的 Device:MainController 节），
+            // 不硬编码任何 COM 口，不自动扫描 / 枚举 USB 设备。
+            var mainControllerConfiguration = configuration
+                .GetSection("Device:MainController")
+                .Get<MainControllerConnectionOptions>() ?? new MainControllerConnectionOptions();
+            services.AddSingleton(mainControllerConfiguration);
+
+            // DCR55-02 / P1-03-01：在 Real 模式下注册真实串口 Transport。
+            // SerialPort 仅存在于 Dcr55SerialTransport / MainControllerSerialTransport（Transport 层），
             // Application 层通过 IDeviceByteTransport 获取结果，永不接触串口。
-            // 当 Dcr55ConnectionOptions 未配置 Port 时，Transport 仍被构造，
-            // 但 ReceiveAsync 会以 NotConfigured 失败闭合，不会尝试打开任何 COM 口。
-            services.AddSingleton<IDeviceByteTransport>(serviceProvider =>
-                new Dcr55SerialTransport(serviceProvider.GetRequiredService<Dcr55ConnectionOptions>()));
+            // 当连接配置未配置 Port / PortName 时，各 Transport 仍被构造，
+            // 但 ReceiveAsync / ExchangeAsync 会以 NotConnected 失败闭合，不会尝试打开任何 COM 口。
+            //
+            // 单个 IDeviceByteTransport 使用 CompositeDeviceByteTransport 按 endpoint 路由：
+            //   - main-controller-v1.0.4 -> MainControllerSerialTransport
+            //   - dcr55-sample-scanner    -> Dcr55SerialTransport
+            // 这样 Application 层依赖保持不变，而两个真实串口各自独立配置与协议。
+            var mainControllerTransport = new MainControllerSerialTransport(mainControllerConfiguration);
+            var dcr55Transport = new Dcr55SerialTransport(dcr55Configuration);
+            services.AddSingleton(mainControllerTransport);
+            services.AddSingleton(dcr55Transport);
+            services.AddSingleton<IDeviceByteTransport>(new CompositeDeviceByteTransport(mainControllerTransport, dcr55Transport));
+
             services.AddSingleton<IDcr55Adapter>(serviceProvider =>
                 new Dcr55RealAdapter(
                     serviceProvider.GetService<IDeviceByteTransport>(),

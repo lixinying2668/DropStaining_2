@@ -32,6 +32,13 @@ public static class DeviceByteTransportStatuses
     public const string TimedOut = "TimedOut";
     public const string Disconnected = "Disconnected";
     public const string Failed = "Failed";
+    // 任务 P1-03-01：更细粒度的串口 Transport 状态，用于区分错误类型。
+    // InvalidFrame：CRC 校验失败 / 非法帧 / 数据不足。
+    // CommunicationError：串口打开失败 / I/O 异常 / 工厂异常。
+    // NotConnected：Transport 未配置（PortName 缺失）或未连接。
+    public const string InvalidFrame = "InvalidFrame";
+    public const string CommunicationError = "CommunicationError";
+    public const string NotConnected = "NotConnected";
 }
 
 public static class DeviceByteTransportEndpoints

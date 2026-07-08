@@ -16,7 +16,11 @@ internal interface ISerialPort : IDisposable
 
     StopBits StopBits { get; set; }
 
+    Handshake Handshake { get; set; }
+
     int ReadTimeout { get; set; }
+
+    int WriteTimeout { get; set; }
 
     bool IsOpen { get; }
 
@@ -67,10 +71,22 @@ internal sealed class SystemIoSerialPortAdapter : ISerialPort
         set => port.StopBits = value;
     }
 
+    public Handshake Handshake
+    {
+        get => port.Handshake;
+        set => port.Handshake = value;
+    }
+
     public int ReadTimeout
     {
         get => port.ReadTimeout;
         set => port.ReadTimeout = value;
+    }
+
+    public int WriteTimeout
+    {
+        get => port.WriteTimeout;
+        set => port.WriteTimeout = value;
     }
 
     public bool IsOpen => port.IsOpen;
