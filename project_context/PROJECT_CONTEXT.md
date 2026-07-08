@@ -27,7 +27,7 @@
 
 ### 1.2 项目状态记录与事实优先级
 
-本文件记录的项目状态截至**阶段 23D“SOCON 独立 x86 Bridge 最小骨架与部署前检查”已完成并已提交；SDK 加载、真实设备连接和动作控制尚未开始**。
+本文件记录的项目状态截至**阶段 23D“SOCON 独立 x86 Bridge 最小骨架与部署前检查”已完成并已提交；P0-01 SOCON 兼容性报告收口与 P0-02 Bridge 正式 net452 x86 构建验证均已完成；P1-01 SDK 运行时部署验证进行中（工作区已有 `ReflectionOnlyManagedAssemblyLoadProbe` 诊断能力，尚未在合法 SDK 部署目录下验证运行时依赖解析）；SDK 执行加载、真实设备连接和动作控制尚未开始**。
 
 为避免后续维护时将旧资料、Mock 行为或现场猜测混入正式结论，事实优先级如下：
 
@@ -39,7 +39,7 @@
 
 当第 2、3 项与旧需求文档或旧原型冲突时，应以已确认的后续事实为准，并在对应配置版本、审计或变更文档中留下追溯记录。
 
-SOCON 兼容性报告的技术结论已经完成，23D Bridge 骨架已完成并提交；后续仍必须以当前仓库内文件内容和 `git status --short` 为准，不能仅凭本文件推定。
+SOCON 兼容性报告的技术结论已经完成（P0-01 已收口，已提交至 HEAD `e7c127df`），23D Bridge 骨架已完成并提交，P0-02 Bridge 正式 net452 x86 构建验证已完成（VS2022 MSBuild Release|x86，59 checks passed）；后续仍必须以当前仓库内文件内容和 `git status --short` 为准，不能仅凭本文件推定。
 
 ### 1.3 项目目标
 
@@ -180,7 +180,8 @@ SOCON 兼容性报告的技术结论已经完成，23D Bridge 骨架已完成并
 | Real 读取边界 | 已完成 | 只读边界、真实写入 fail-closed |
 | SOCON SDK 兼容性取证（23D-0） | 已完成 | 已确认独立 x86 Bridge 架构；不代表主项目可直接引用 SDK 或设备可动作 |
 | SOCON 独立 x86 Bridge 骨架（23D） | 已完成并已提交 | 独立 net452 x86 Console；未加入 Stainer.sln；仅离线 IPC 与部署前检查 |
-| Bridge 正式 net452 x86 构建验证 | 未完成 | 临时 x86 self-test 53 checks 已通过；正式 .csproj + MSBuild + Targeting Pack 待验证 |
+| Bridge 正式 net452 x86 构建验证（P0-02） | 已完成 | VS2022 MSBuild Release|x86 成功；输出 bin\x86\Release\Stainer.SoconBridge.exe；--self-test 59 checks passed；未加载 SDK/未连接硬件/未扫描总线 |
+| SDK 运行时部署验证（P1-01） | 进行中 | 工作区已新增 `ReflectionOnlyManagedAssemblyLoadProbe` 诊断能力（仅反射加载 SOCON 托管 DLL 元数据 + 5 类型检查）；尚未在合法 SDK 部署目录下验证运行时依赖解析；仍禁止 Connect/OpenPort/设备动作 |
 | 真实设备连接/只读 | 未完成 | 需硬件、映射、安全信息和现场条件 |
 | 真实动作、校准、湿实验 | 未完成 | 禁止提前实施 |
 | 实际 LIS 接入 | 未完成 | 仅 Mock LIS 已完成 |
@@ -195,8 +196,10 @@ SOCON 兼容性报告的技术结论已经完成，23D Bridge 骨架已完成并
 - 主控、DCR55、制冷离线协议测试：已完成。
 - 离线 Real Adapter 读取边界测试：已完成。
 - 最近已确认主项目构建/测试：`Stainer.Tests` 构建诊断命令成功；**171/171 tests passed，TEST_EXIT=0**。
-- 最近已确认 Bridge 自检结果：临时 x86 直接编译方式 `--self-test` **53 checks 通过**。
-- Bridge 正式构建状态：`.csproj + MSBuild + net452 Targeting Pack` **尚未验证**，需补齐完整 .NET Framework 4.5.2 Targeting Pack 与可用 MSBuild 后再验证。
+- 最近已确认 Bridge 自检结果：**正式 net452 x86 构建**（VS2022 MSBuild Release|x86，输出 `bin\x86\Release\Stainer.SoconBridge.exe`）`--self-test` **59 checks passed**（P0-02 已完成 @ 2026-07-08）。
+- Bridge 正式构建状态：**已完成**（P0-02 已关闭）。
+- P1-01 SDK 运行时部署验证：**进行中**——工作区已有 4 个 Bridge 源码变更新增 `ReflectionOnlyManagedAssemblyLoadProbe` / `Assembly.ReflectionOnlyLoadFrom()` 诊断能力；该能力属于 P1-01，不能归入 P0-02；后续需在合法 SDK 部署目录下验证 `ReflectionOnlyLoadFrom()` 的运行时依赖解析行为，确认不会因模块初始化器或 native P/Invoke 依赖产生意外副作用。
+- **风险备注**：`ReflectionOnlyLoadFrom()` 虽不执行设备动作，但会把 SOCON 托管 DLL 加载到 Bridge 进程地址空间，可能触发依赖解析；必须单独作为 P1-01 验收，不得写成真实设备可用。
 - 之前 testhost 异常：未稳定复现，不能作为已定位根因记录。
 - 正式数据库：已验证迁移一致、无 pending migration。
 - 真实机械臂、真实串口、真实 USB2CAN、真实安全 IO、真实湿实验：未开始。
@@ -1507,8 +1510,8 @@ SDK 不存在统一 `ErrorCode` 枚举。
 
 ### 14.5 当前未完成事项
 
-- Bridge 正式 net452 x86 构建验证；
-- SDK 真实部署验证；
+- Bridge 正式 net452 x86 构建验证（P0-02 已完成 @ 2026-07-08）；
+- SDK 真实部署验证（P1-01 进行中——工作区已有 `ReflectionOnlyManagedAssemblyLoadProbe` 诊断能力，尚未在合法 SDK 部署目录下验证运行时依赖解析）；
 - SDK 实例化；
 - USB2CAN 驱动和连接；
 - CAN 通讯；
@@ -1789,16 +1792,24 @@ Stainer.SoconBridge.exe --self-test
 11. Named Pipe 超长、空长度、非法 UTF-8、非法 JSON 被拒绝；
 12. 自检结束清理临时目录。
 
-当前验证结论：临时 x86 直接编译方式运行 `--self-test`，**53 checks 通过**；该结论不等同于正式 `.csproj` 构建通过。
+当前验证结论：**正式 net452 x86 构建**（VS2022 MSBuild Release|x86，输出 `bin\x86\Release\Stainer.SoconBridge.exe`）`--self-test` **59 checks passed**（P0-02 已完成 @ 2026-07-08）。
 
-### 15.10 构建验证
+> 说明：P1-01 SDK 运行时部署验证仍进行中——工作区已新增 `ReflectionOnlyManagedAssemblyLoadProbe` / `Assembly.ReflectionOnlyLoadFrom()` 诊断能力（仅反射加载 SOCON 托管 DLL 元数据 + 5 类型检查），尚未在合法 SDK 部署目录下验证运行时依赖解析。
 
-Bridge 正式 `.csproj + MSBuild + net452 Targeting Pack` 构建仍待验证。当前机器缺少完整 .NET Framework 4.5.2 Targeting Pack，且未找到可用 VS/Build Tools MSBuild，不能写成正式构建已通过。
+### 15.10 构建验证（P0-02 已完成）
 
-待环境补齐后单独构建：
+Bridge 正式 `.csproj + MSBuild + net452 Targeting Pack` 构建验证**已完成**（2026-07-08）：
+
+- VS2022 MSBuild `Release|x86` 构建成功；
+- 输出 `bin\x86\Release\Stainer.SoconBridge.exe`；
+- 运行 `--self-test` 通过 **59 checks**；
+- 本次验证未加载 SOCON SDK、未连接真实硬件、未扫描 USB/COM/CAN/网络设备；
+- 本次验证基于 HEAD（`e7c127df`）的 Bridge 代码，不含工作区后续 4 个 Bridge 源码改动（`ReflectionOnlyManagedAssemblyLoadProbe` 相关诊断能力属于 P1-01）。
+
+构建命令参考：
 
 ```cmd
-MSBuild bridges\Stainer.SoconBridge\Stainer.SoconBridge.csproj /p:Configuration=Release
+MSBuild bridges\Stainer.SoconBridge\Stainer.SoconBridge.csproj /p:Configuration=Release /p:Platform=x86
 ```
 
 随后运行实际输出路径中的：
@@ -1815,8 +1826,6 @@ dotnet test Stainer.sln --configuration Release --no-build
 git diff --check
 git status --short
 ```
-
-如缺少 .NET Framework 4.5.2 Targeting Pack 或 x86 MSBuild 环境，只记录缺失项；不得自动安装组件。
 
 ---
 
@@ -2251,9 +2260,9 @@ git diff --check
 git status --short
 ```
 
-### 21.4 Bridge 正式构建待验证
+### 21.4 Bridge 正式构建验证（P0-02 已完成）
 
-Bridge 已创建并提交；正式 `.csproj + MSBuild + net452 Targeting Pack` 构建仍待完整 Targeting Pack 和可用 MSBuild 环境补齐后验证：
+Bridge 已创建并提交；正式 `.csproj + MSBuild + net452 Targeting Pack` 构建验证**已完成**（VS2022 MSBuild Release|x86，59 checks passed）。构建命令参考：
 
 ```cmd
 cd /d D:\Stainer
@@ -2285,8 +2294,8 @@ git status --short
 - `real-hardware\socon-sdk-compatibility-report.md` 的内容为最终修订版；
 - 没有厂商 SDK、Demo、DLL、驱动、授权文件或临时探针进入待提交列表；
 - 没有将最终修订版仅保留在下载目录而未写回仓库目标文件；
-- Bridge 正式 net452 x86 构建验证仍待完整 Targeting Pack/MSBuild 环境；
-- 未开始 SDK 加载、真实设备连接或动作控制，除非后续阶段另有明确授权。
+- Bridge 正式 net452 x86 构建验证已完成（P0-02，59 checks passed @ 2026-07-08）；P1-01 SDK 运行时部署验证进行中；
+- 未开始 SDK 执行加载（`ReflectionOnlyLoadFrom` 仅为元数据检查）、真实设备连接或动作控制，除非后续阶段另有明确授权。
 
 ---
 
@@ -2308,14 +2317,15 @@ DAB 生命周期
 数字孪生 XY 基线导入和真实动作门禁
 主控/DCR55/制冷离线协议
 离线 Real 读取边界
-SOCON SDK 兼容性取证（技术结论已完成；最终修订报告 Git 收口需核验）
+SOCON SDK 兼容性取证与兼容性报告 Git 收口（P0-01，已完成并已提交至 HEAD e7c127df）
 SOCON 独立 x86 Bridge 最小骨架与部署前检查（23D，已完成并提交）
+Bridge 正式 net452 x86 构建验证（P0-02，已完成 @ 2026-07-08，59 checks passed）
 ```
 
 ### 未完成
 
 ```text
-Bridge 正式 net452 x86 构建验证（待完整 Targeting Pack/MSBuild）
+SDK 运行时部署验证（P1-01，进行中——工作区已有 ReflectionOnlyManagedAssemblyLoadProbe 诊断能力，尚未在合法 SDK 部署目录下验证运行时依赖解析）
 真实主控串口接入
 真实 DCR55 接入
 真实制冷接入

@@ -2,34 +2,31 @@
 
 # 全自动冰冻切片染色机上位机待办清单
 
-> 本文件仅保留截至当前仍需完成的项目工作。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、SOCON SDK 静态兼容性取证及 23D SOCON 独立 x86 Bridge 骨架均已完成，不再重复列入。
+> 本文件仅保留截至当前仍需完成的项目工作。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证均已完成，不再重复列入。
 
 ## P0：真实设备接入前的阻塞项
 
-### P0-01｜SOCON 兼容性报告收口并提交
+### ✅ P0-01｜SOCON 兼容性报告收口并提交（已完成）
 
-- **目标**：将最终修订版 `real-hardware/socon-sdk-compatibility-report.md` 写入仓库并提交，使 SOCON Bridge 架构决策可追溯。
-- **当前状态**：最终修订版已形成；尚需确认仓库文件已替换为最终版本并完成 Git 提交。
-- **前置条件**：无。
-- **完成标准**：
-  - 报告明确“独立 x86 探针隔离加载成功”不等于主项目可直接引用 SDK，也不等于机械臂可安全控制。
-  - 报告将 `can_bootloader.dll` 的 x86 限制限定为执行 USB2CAN/CAN 相关路径时的承载进程要求。
-  - 报告不含本机绝对路径、厂商 DLL、Demo、驱动、授权文件、真实设备参数或凭据。
-  - `git diff --check` 通过，Git 提交仅包含预期报告文件。
-- **建议下一步**：确认 `D:\Stainer\real-hardware\socon-sdk-compatibility-report.md` 为最终修订版后，在 `D:\Stainer` 检查 Git 状态并提交。
+- **完成时间**：2026-07-08 只读核对确认。
+- **完成证据**：
+  - `real-hardware/socon-sdk-compatibility-report.md` 已存在并已提交至 HEAD（`e7c127df`）。
+  - 工作区无 `socon-sdk-compatibility-report.md` 的后续改动（`git status --short` 未列出该文件）。
+  - 报告不含本机绝对路径、厂商 DLL、Demo、驱动、授权文件或真实设备凭据。
+- **说明**：本条目已完成，仅保留作为追溯记录。
 
-### P0-02｜补齐 Bridge 正式 net452 x86 构建验证
+### ✅ P0-02｜补齐 Bridge 正式 net452 x86 构建验证（已完成）
 
-- **目标**：在完整 `.NET Framework 4.5.2 Targeting Pack` 与可用 MSBuild 环境下，验证已提交的 `bridges/Stainer.SoconBridge/` 正式项目构建。
-- **当前状态**：23D Bridge 骨架已完成并提交；临时 x86 self-test 已通过 53 checks；正式 net452 `.csproj` 构建尚未验证。
-- **前置条件**：本机具备完整 .NET Framework 4.5.2 Targeting Pack，并可使用 VS/Build Tools MSBuild。
-- **完成标准**：
-  - 正式构建 `bridges/Stainer.SoconBridge/Stainer.SoconBridge.csproj` 成功，保持 `.NET Framework 4.5.2` 与 `<PlatformTarget>x86</PlatformTarget>`。
-  - 使用正式构建输出重新运行 Bridge `--self-test` 并通过。
-  - 验证范围仍限于离线 Bridge、IPC、部署前文件/PE 检查和自检。
-  - 不加载、不反射、不实例化、不调用 SOCON SDK。
-  - 不连接或扫描 USB2CAN、COM、CAN、网络设备或真实硬件；不创建动作类命令。
-- **建议下一步**：在用户明确授权补齐外部构建环境后，仅执行正式构建与 Bridge self-test 验证。
+- **完成时间**：2026-07-08 只读核对确认。
+- **完成证据**：
+  - VS2022 MSBuild `Release|x86` 正式构建 `bridges/Stainer.SoconBridge/Stainer.SoconBridge.csproj` 成功。
+  - 目标框架保持 `.NET Framework 4.5.2`，平台目标保持 `<PlatformTarget>x86</PlatformTarget>`。
+  - 正式构建输出 `bin\x86\Release\Stainer.SoconBridge.exe`。
+  - 使用正式构建输出运行 Bridge `--self-test`，结果为 **59 checks passed**。
+- **边界说明（重要）**：
+  - 本次验证未加载 SOCON SDK、未连接真实硬件、未扫描 USB/COM/CAN/网络设备。
+  - 本次验证基于 HEAD（`e7c127df`）的 Bridge 代码，不包含工作区后续 4 个 Bridge 源码改动（`ReflectionOnlyManagedAssemblyLoadProbe` 相关诊断能力属于 P1-01，见下）。
+- **说明**：本条目已完成，仅保留作为追溯记录。
 
 ### P0-03｜完成真实设备现场接口、映射与安全 IO 取证
 
@@ -72,10 +69,18 @@
 
 ## P1：真实设备接入与实验闭环
 
-### P1-01｜验证 SOCON SDK 运行时部署并保持进程隔离
+### 🚧 P1-01｜验证 SOCON SDK 运行时部署并保持进程隔离（进行中）
 
 - **目标**：在 Bridge 内验证厂商 SDK 的实际运行时依赖与隔离行为，为后续真实连接做准备。
-- **当前状态**：Bridge 骨架已完成并提交；临时 x86 self-test 已通过 53 checks；正式 net452 构建和 SDK 运行时部署验证尚未完成。
+- **当前状态**：**进行中**。
+  - P0-02 已完成：Bridge 正式 net452 x86 构建通过（59 checks passed）。
+  - 当前工作区已有 4 个 Bridge 源码变更（`Stainer.SoconBridge.csproj`、`BridgeRequestProcessor.cs`、`SdkDeploymentValidator.cs`、`SelfTestRunner.cs`），新增 `ReflectionOnlyManagedAssemblyLoadProbe` / `Assembly.ReflectionOnlyLoadFrom()` 相关诊断能力。
+  - 该能力覆盖 `SOCON.API.dll` / `SOCON.Utility.dll` 的仅反射元数据加载，并检查 5 个 SOCON 核心类型（`SCDevice`、`SCDeviceMA`、`Utility+e_ConnectType`、`Utility+DeviceTypeEnum`、`Utility+ProtocolTypeEnum`）。
+  - **该能力属于 P1-01，不能归入 P0-02**（P0-02 完成标准要求“不反射加载 SDK”，该边界仅对 HEAD 代码成立）。
+- **后续仍需验证**：
+  - 在合法 SDK 部署目录下验证 `ReflectionOnlyLoadFrom()` 的运行时依赖解析行为（.NET Framework 4.5.2 下 ReflectionOnly 上下文仍会解析依赖项）。
+  - 确认不会因 SOCON 托管 DLL 的模块初始化器或 native P/Invoke 依赖导致意外副作用。
+- **仍禁止**：`Connect`/`OpenPort`、SDK 实例化、设备连接和真实动作。
 - **前置条件**：P0-02 完成；获得合法 SDK 部署目录及缺失依赖的合法来源/部署说明。
 - **完成标准**：
   - SDK 仅部署在本机受控目录，不进入 Git。
@@ -83,6 +88,7 @@
   - SDK 运行时异常不会影响 Stainer 主进程。
   - 本阶段仍不得连接 USB2CAN、调用 `Connect`/`OpenPort` 或任何设备动作。
   - 输出可复现的部署验证记录。
+  - **风险备注**：`ReflectionOnlyLoadFrom()` 虽不执行设备动作，但会把 SOCON 托管 DLL 加载到 Bridge 进程地址空间，可能触发依赖解析；必须单独作为 P1-01 验收，不得写成真实设备可用。
 - **建议下一步**：先验证最小运行时依赖与异常隔离，再允许接入真实通讯。
 
 ### P1-02｜接入 SOCON/USB2CAN 的真实连接与只读状态
