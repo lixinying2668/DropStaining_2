@@ -6,6 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!--
+    DCR55-02：将 Transport 层内部的串口抽象 (ISerialPort) 暴露给测试程序集，
+    以便在不打开真实 COM 口的情况下注入可控假实现进行离线单元测试。
+    该设置仅作用于测试项目，不会让 Application 层或其他业务代码访问这些 internal 成员，
+    仍然保证 “SerialPort 仅存在于 Transport 层” 的架构边界。
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Stainer.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.5" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.5">
@@ -16,6 +26,10 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

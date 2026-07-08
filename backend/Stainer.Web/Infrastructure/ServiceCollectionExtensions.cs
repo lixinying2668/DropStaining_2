@@ -126,6 +126,14 @@ public static class ServiceCollectionExtensions
                 .GetSection("Device:Dcr55")
                 .Get<Dcr55ConnectionOptions>() ?? new Dcr55ConnectionOptions();
             services.AddSingleton(dcr55Configuration);
+
+            // DCR55-02：在 Real 模式下注册真实串口 Transport。
+            // SerialPort 仅存在于 Dcr55SerialTransport（Transport 层），
+            // Application 层通过 IDeviceByteTransport 获取结果，永不接触串口。
+            // 当 Dcr55ConnectionOptions 未配置 Port 时，Transport 仍被构造，
+            // 但 ReceiveAsync 会以 NotConfigured 失败闭合，不会尝试打开任何 COM 口。
+            services.AddSingleton<IDeviceByteTransport>(serviceProvider =>
+                new Dcr55SerialTransport(serviceProvider.GetRequiredService<Dcr55ConnectionOptions>()));
             services.AddSingleton<IDcr55Adapter>(serviceProvider =>
                 new Dcr55RealAdapter(
                     serviceProvider.GetService<IDeviceByteTransport>(),
