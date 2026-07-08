@@ -28,8 +28,11 @@ namespace Stainer.SoconBridge
 
         private sealed class SelfTest
         {
+            private readonly TextWriter output;
+
             public SelfTest(TextWriter output)
             {
+                this.output = output;
             }
 
             public int CheckCount { get; private set; }
@@ -43,10 +46,13 @@ namespace Stainer.SoconBridge
                 MissingCoreFiles();
                 InvalidCanBootloaderPe();
                 NonX86ProcessProbe();
+                ManagedAssemblyLoadFailureIsReported();
+                RequiredTypeFailureIsReported();
                 DeploymentValidatedWithCompleteFakeFiles();
                 DeploymentValidatedWithRuntimeWarnings();
                 ActionCommandsAreNotSupported();
                 LengthPrefixedProtocolRejectsMalformedRequests();
+                ConfiguredSdkRuntimeValidation();
             }
 
             private void PingReturnsOffline()
@@ -132,6 +138,36 @@ namespace Stainer.SoconBridge
 
                     Assert(result.Status == BridgeStatus.ArchitectureInvalid, "Non-x86 process probe should report ArchitectureInvalid.");
                     Assert(result.Details.IsX86Process == false, "Non-x86 process should be reported.");
+                });
+            }
+
+            private void ManagedAssemblyLoadFailureIsReported()
+            {
+                WithTempDirectory(delegate(string sdkDirectory)
+                {
+                    WriteCompleteFakeSdk(sdkDirectory, true);
+
+                    var validator = CreateValidator(sdkDirectory, sdkDirectory, true, false);
+                    var result = validator.Validate();
+
+                    Assert(result.Status == BridgeStatus.SdkFilesMissing, "Managed assembly load failure should block validation.");
+                    Assert(result.RuntimeDetails.ManagedAssemblyLoadSucceeded == false, "Managed assembly load failure should be reported.");
+                    Assert(result.RuntimeDetails.ExceptionDetails.Count > 0, "Managed assembly load exception details should be captured.");
+                });
+            }
+
+            private void RequiredTypeFailureIsReported()
+            {
+                WithTempDirectory(delegate(string sdkDirectory)
+                {
+                    WriteCompleteFakeSdk(sdkDirectory, true);
+
+                    var validator = CreateValidator(sdkDirectory, sdkDirectory, true, true, false);
+                    var result = validator.Validate();
+
+                    Assert(result.Success, "Missing diagnostic types should not change deployment validation status.");
+                    Assert(result.RuntimeDetails.RequiredTypesAvailable == false, "Missing required SOCON types should be reported.");
+                    Assert(!result.DiagnosticSuccess, "Missing required SOCON types should fail the diagnostic result.");
                 });
             }
 
@@ -222,13 +258,148 @@ namespace Stainer.SoconBridge
 
             private SdkDeploymentValidator CreateValidator(string baseDirectory, string sdkDirectory, bool isX86Process)
             {
+                return CreateValidator(baseDirectory, sdkDirectory, isX86Process, true);
+            }
+
+            private SdkDeploymentValidator CreateValidator(string baseDirectory, string sdkDirectory, bool isX86Process, bool managedLoadSucceeds)
+            {
+                return CreateValidator(baseDirectory, sdkDirectory, isX86Process, managedLoadSucceeds, true);
+            }
+
+            private SdkDeploymentValidator CreateValidator(
+                string baseDirectory,
+                string sdkDirectory,
+                bool isX86Process,
+                bool managedLoadSucceeds,
+                bool requiredTypesAvailable)
+            {
                 var options = new SdkDeploymentValidatorOptions(baseDirectory);
                 options.EnvironmentSdkDirectoryProvider = delegate { return sdkDirectory; };
 
                 return new SdkDeploymentValidator(
                     options,
                     new FixedArchitectureProbe(isX86Process),
-                    new PeArchitectureInspector());
+                    new PeArchitectureInspector(),
+                    new FixedManagedAssemblyLoadProbe(managedLoadSucceeds, requiredTypesAvailable));
+            }
+
+            private void ConfiguredSdkRuntimeValidation()
+            {
+                var options = new SdkDeploymentValidatorOptions(AppDomain.CurrentDomain.BaseDirectory);
+                var validator = new SdkDeploymentValidator(
+                    options,
+                    new DefaultProcessArchitectureProbe(),
+                    new PeArchitectureInspector(),
+                    new ReflectionOnlyManagedAssemblyLoadProbe());
+
+                var result = validator.Validate();
+                WriteDiagnosticReport(result);
+
+                if (result.RuntimeDetails.SdkPathConfigured == true)
+                {
+                    Assert(result.DiagnosticSuccess, "Configured SDK diagnostic validation should pass.");
+                }
+            }
+
+            private void WriteDiagnosticReport(SdkDeploymentValidationResult result)
+            {
+                var details = result.RuntimeDetails;
+
+                output.WriteLine("SOCON Diagnostic Report");
+                output.WriteLine();
+                output.WriteLine("SDK Path: {0}", details.SdkDirectory ?? "(not configured)");
+                output.WriteLine("SDK Source: {0}", details.SdkPathSource ?? "unknown");
+                output.WriteLine("SDK Path Exists: {0}", FormatAvailability(details.SdkDirectoryExists));
+                output.WriteLine("Process Architecture: {0}", details.ProcessArchitecture ?? "unknown");
+
+                output.WriteLine();
+                output.WriteLine("Assemblies:");
+                WriteManagedAssemblyReport(details, "SOCON.API.dll", "SOCON.API");
+                WriteManagedAssemblyReport(details, "SOCON.Utility.dll", "SOCON.Utility");
+                output.WriteLine("can_bootloader:");
+                output.WriteLine("  Exists: {0}", FormatFileCheck(details, "can_bootloader.dll"));
+
+                output.WriteLine(
+                    "  PE Architecture: {0}{1}",
+                    details.NativeDllCheckSucceeded == true ? "x86" : FormatNullableResult(details.NativeDllCheckSucceeded),
+                    string.IsNullOrEmpty(details.CanBootloaderMachine) ? string.Empty : " (" + details.CanBootloaderMachine + ")");
+                output.WriteLine(
+                    "  File Version: {0}",
+                    string.IsNullOrEmpty(details.CanBootloaderFileVersion) ? "unavailable" : details.CanBootloaderFileVersion);
+
+                output.WriteLine();
+                output.WriteLine("Available Types:");
+                foreach (var typeCheck in details.TypeChecks)
+                {
+                    output.WriteLine(
+                        "{0}: {1} ({2})",
+                        typeCheck.DisplayName,
+                        typeCheck.Available ? "available" : "missing",
+                        typeCheck.FullName);
+                }
+
+                output.WriteLine();
+                output.WriteLine(
+                    "Exception Details: {0}",
+                    details.ExceptionDetails.Count == 0 ? "none" : string.Join("; ", details.ExceptionDetails.ToArray()));
+                output.WriteLine("Result: {0}", result.DiagnosticSuccess ? "PASS" : "FAIL");
+            }
+
+            private void WriteManagedAssemblyReport(
+                SdkRuntimeValidationDetails details,
+                string fileName,
+                string displayName)
+            {
+                var load = FindManagedAssemblyLoad(details, fileName);
+
+                output.WriteLine("{0}:", displayName);
+                output.WriteLine("  Exists: {0}", FormatFileCheck(details, fileName));
+                output.WriteLine(
+                    "  Assembly Version: {0}",
+                    load == null || string.IsNullOrEmpty(load.AssemblyVersion) ? "unavailable" : load.AssemblyVersion);
+                output.WriteLine(
+                    "  Metadata Load: {0}",
+                    load == null ? "not run" : (load.Success ? "PASS" : "FAIL"));
+            }
+
+            private static ManagedAssemblyLoadResult FindManagedAssemblyLoad(
+                SdkRuntimeValidationDetails details,
+                string fileName)
+            {
+                foreach (var load in details.ManagedAssemblyLoads)
+                {
+                    if (string.Equals(load.FileName, fileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return load;
+                    }
+                }
+
+                return null;
+            }
+
+            private static string FormatFileCheck(SdkRuntimeValidationDetails details, string fileName)
+            {
+                return details.FileChecks.Contains(fileName + "=present") ? "yes" : "no";
+            }
+
+            private static string FormatAvailability(bool? value)
+            {
+                if (!value.HasValue)
+                {
+                    return "unknown";
+                }
+
+                return value.Value ? "yes" : "no";
+            }
+
+            private static string FormatNullableResult(bool? result)
+            {
+                if (!result.HasValue)
+                {
+                    return "not run";
+                }
+
+                return result.Value ? "OK" : "failed";
             }
 
             private void AssertRejected(byte[] frame, string message)
@@ -380,6 +551,43 @@ namespace Stainer.SoconBridge
             public bool IsX86Process()
             {
                 return isX86Process;
+            }
+        }
+
+        private sealed class FixedManagedAssemblyLoadProbe : IManagedAssemblyLoadProbe
+        {
+            private readonly bool success;
+            private readonly bool requiredTypesAvailable;
+
+            public FixedManagedAssemblyLoadProbe(bool success, bool requiredTypesAvailable)
+            {
+                this.success = success;
+                this.requiredTypesAvailable = requiredTypesAvailable;
+            }
+
+            public ManagedAssemblyLoadResult Load(string filePath, IEnumerable<ManagedTypeRequirement> typeRequirements)
+            {
+                var fileName = Path.GetFileName(filePath);
+                if (!success)
+                {
+                    return ManagedAssemblyLoadResult.Failed(
+                        fileName,
+                        new BadImageFormatException("Simulated managed load failure."));
+                }
+
+                var typeChecks = new List<ManagedTypeCheckResult>();
+                if (typeRequirements != null)
+                {
+                    foreach (var requirement in typeRequirements)
+                    {
+                        typeChecks.Add(new ManagedTypeCheckResult(
+                            requirement.DisplayName,
+                            requirement.FullName,
+                            requiredTypesAvailable));
+                    }
+                }
+
+                return ManagedAssemblyLoadResult.Succeeded(fileName, fileName, "1.0.0.0", typeChecks);
             }
         }
     }

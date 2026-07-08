@@ -34,7 +34,8 @@ namespace Stainer.SoconBridge
             var deploymentValidator = new SdkDeploymentValidator(
                 options,
                 new DefaultProcessArchitectureProbe(),
-                new PeArchitectureInspector());
+                new PeArchitectureInspector(),
+                new ReflectionOnlyManagedAssemblyLoadProbe());
 
             return new BridgeRequestProcessor(deploymentValidator, BridgeStatus.Offline);
         }
