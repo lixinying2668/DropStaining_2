@@ -2,7 +2,7 @@
 
 # 全自动冰冻切片染色机上位机待办清单
 
-> 本文件仅保留截至当前仍需完成的项目工作。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证均已完成，不再重复列入。
+> 本文件仅保留截至当前仍需完成的项目工作。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 配置模型评估（经代码评估无需新增模型）均已完成，不再重复列入。
 
 ## 已完成但保留追溯的扫码器后端事项
 
@@ -36,6 +36,43 @@
   - DCR55 控制服务抽象。
   - Restart / Calibration Light / ROI 后端接口。
 - **边界说明**：本项是后端服务抽象和命令封装，不代表 DCR55 已完成真实接入、真实 ROI 效果验证或真实校验光效果验证。
+
+## 已完成但保留追溯的工程配置与 Workflow 事项
+
+### ✅ 坐标 Z 语义补齐（已完成）
+
+- **完成内容**：`CoordinatePoint.AspirateEndZUm`（Z-End）新增；Z 语义映射为 Z-Travel→`SafeZUm`、Z-Start→`LiquidDetectZUm`、Z-End→`AspirateEndZUm`、Z-Dispense→`DispenseZUm`；同步校准历史、坐标快照、校准请求与导入差异。
+- **边界说明**：仅补齐配置表达与冻结快照；`AspirateEndZUm` 为 nullable、未纳入 Real readiness 门禁，旧坐标数据兼容；未接入 Motion 执行逻辑。
+
+### ✅ LiquidClass 参数补齐（已完成）
+
+- **完成内容**：`LiquidClassVersion` 新增 `LiquidFollowingDepthUm`、`RetractSpeedUmPerSecond`、`ConditioningVolumeUl`、`BreakoffSpeedUlPerSecond`、`PostDispenseAirGapUl`；System Trailing Air Gap 复用既有 `TrailingAirGapUl`；接入配置写入、校验、版本差异、冻结快照与读取。
+- **边界说明**：仅补齐配置表达与快照；未接入执行。
+
+### ✅ 工程手动移液测试 API（已完成）
+
+- **完成内容**：`EngineeringPipettingService` 支持 LiquidDetect / Aspirate / Dispense / Wash / Flush；`Purge`、`ClearChannel` 列为 `UnsupportedOperations`；具备 engineer/admin 权限、EngineeringSession、CommandIdempotency、AuditLog，Real 模式 fail-closed。
+- **边界说明**：未连接真实设备、未执行真实移液动作；不影响 Motion 正式执行、Workflow 执行、DCR55、SOCON、MainController。
+
+### ✅ Workflow 配置模型（已完成评估，无需新增模型）
+
+- **历史记录保留**：Workflow 版本化、默认工作流、抗体映射、通道绑定、运行快照冻结等既有历史工作均保留追溯，不删除。
+- **评估结论**：经代码评估，现有 `WorkflowDefinition` / `WorkflowVersion` / `WorkflowStep` / `WorkflowReagentRequirement` 与 `ChannelBatch.SelectedWorkflowVersionId` 已满足“实验流程加载”需求；同一 Channel 内 4 个玻片共享同一 Workflow、不同 Channel 可选不同 Workflow 已被数据模型与运行实例化强制；`StainingTask.WorkflowVersionId` 为任务意图/兼容校验，`ChannelBatch.SelectedWorkflowVersionId` 为运行执行权威。
+- **结论**：Workflow 配置模型无需继续开发，无需新增数据库字段或 Migration。
+
+### 仍需完成（与上述后端配置能力配套）
+
+- 前端工程配置页面：坐标 Z 语义 / LiquidClass 参数 / 工程移液测试 的可视化配置与展示（当前仅后端能力完成，无对应前端页面）。
+- DCR55 真实硬件验证（见 P1-07）、主控真实硬件验证（见 P1-03）、SOCON 真实接入（见 P1-02）仍为未完成。
+
+## 后续能力评估（非真实设备前置，独立任务）
+
+### Workflow 执行 / 调度能力评估
+
+- **目标**：评估将已加载并冻结的实验脚本实际跑起来所需的后端执行/调度能力。
+- **当前状态**：未开始；属于独立任务，不代表立即进入开发。
+- **范围**：步骤调度、运行状态机、Motion 调用、液路调用、温控调用、错误恢复。
+- **边界**：配置与执行必须分离；不修改现有 Workflow / Motion 配置模型；不绕过资源锁、命令幂等、审计与运行快照。
 
 ## P0：真实设备接入前的阻塞项
 
