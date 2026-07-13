@@ -8,7 +8,6 @@ public static partial class WebHostEndpointExtensions
     [
         "/",
         "/login",
-        "/control-console",
         "/dashboard",
         "/samples",
         "/reagents",
@@ -24,9 +23,10 @@ public static partial class WebHostEndpointExtensions
 
     private static void MapPageEndpoints(WebApplication app, bool legacyRuntimeCompatibilityEnabled)
     {
+        // /control-console 已由 MapTwinEndpoints 接管（直接返回数字孪生 HTML），不再作为旧版页面渲染。
         var pageRoutes = legacyRuntimeCompatibilityEnabled
             ? PageRoutes.Concat(["/mock-timeline"])
-            : PageRoutes.Where(x => !x.Equals("/control-console", StringComparison.OrdinalIgnoreCase));
+            : PageRoutes;
 
         foreach (var route in pageRoutes)
         {

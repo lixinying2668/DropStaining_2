@@ -301,45 +301,23 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         var versionId = profile.ActiveVersionId
             ?? (await dbContext.CoordinateProfileVersions.SingleAsync(x => x.CoordinateProfileId == profile.Id && x.IsActive, cancellationToken)).Id;
 
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle1", "Needle", 0, 0, false, now, cancellationToken);
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle2", "Needle", 0, 25000, false, now, cancellationToken);
-
-        var slotCodes = await dbContext.PhysicalSlots.Select(x => x.Code).ToListAsync(cancellationToken);
-        foreach (var code in slotCodes)
-        {
-            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "PhysicalSlot", null, null, true, now, cancellationToken);
-        }
-
-        var reagentCodes = await dbContext.ReagentRackPositions.Select(x => x.Code).ToListAsync(cancellationToken);
-        foreach (var code in reagentCodes)
-        {
-            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "ReagentRackPosition", null, null, true, now, cancellationToken);
-        }
-
-        var dabCodes = await dbContext.DabMixPositions.Select(x => x.Code).ToListAsync(cancellationToken);
-        foreach (var code in dabCodes)
-        {
-            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "DabMixPosition", null, null, true, now, cancellationToken);
-        }
-
-        var washCodes = await dbContext.WashPositions.Select(x => x.Code).ToListAsync(cancellationToken);
-        foreach (var code in washCodes)
-        {
-            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "WashPosition", null, null, true, now, cancellationToken);
-        }
-
-        // Sample scanner calibration/test reference only. The arm-mounted sample
-        // scanner (DCR55) is a tool reference, not a fixed per-version movement
-        // target (the arm carries it to a slot/ScannerRegion, stops, then reads).
-        // Reagent scanning uses the fixed multi-channel scanner module, not arm
-        // movement. Kept as a non-required calibration point so legacy/seeded
-        // baselines still expose a named sample-scanner anchor without being
-        // enforced as an executable target by CoordinateProfileLifecycleService.
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "SampleScannerCalibrationPoint", "SampleScannerCalibration", null, null, true, now, cancellationToken);
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "DabA", "DabSourceBottle", null, null, true, now, cancellationToken);
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "DabB", "DabSourceBottle", null, null, true, now, cancellationToken);
-
         var version = await dbContext.CoordinateProfileVersions.SingleAsync(x => x.Id == versionId, cancellationToken);
+
+        // A coordinate version's point set is immutable once it leaves Draft or is
+        // referenced by a channel batch / machine run (enforced in
+        // StainerDbContext.ValidateCoordinateVersionChanges). Default points are only
+        // populated into a version that is still mutable; databases seeded before a
+        // default point was added or renamed keep their historical, now-locked point
+        // set instead of failing startup by mutating a protected version in place.
+        var canPopulatePoints = version.Status == CoordinateProfileVersionStatus.Draft
+            && !await dbContext.MachineRuns.AnyAsync(x => x.CoordinateProfileVersionId == versionId, cancellationToken)
+            && !await dbContext.ChannelBatches.AnyAsync(x => x.CoordinateProfileVersionId == versionId, cancellationToken);
+
+        if (canPopulatePoints)
+        {
+            await PopulateDefaultCoordinatePointsAsync(profile.Id, versionId, now, cancellationToken);
+        }
+
         if (version.Status == CoordinateProfileVersionStatus.Draft)
         {
             version.Status = CoordinateProfileVersionStatus.Active;
@@ -353,6 +331,51 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         profile.Status = CoordinateProfileStatus.Enabled;
         profile.IsActive = true;
         profile.ActiveVersionId = versionId;
+    }
+
+    private async Task PopulateDefaultCoordinatePointsAsync(
+        string coordinateProfileId,
+        string coordinateProfileVersionId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, "Needle1", "Needle", 0, 0, false, now, cancellationToken);
+        await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, "Needle2", "Needle", 0, 25000, false, now, cancellationToken);
+
+        var slotCodes = await dbContext.PhysicalSlots.Select(x => x.Code).ToListAsync(cancellationToken);
+        foreach (var code in slotCodes)
+        {
+            await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, code, "PhysicalSlot", null, null, true, now, cancellationToken);
+        }
+
+        var reagentCodes = await dbContext.ReagentRackPositions.Select(x => x.Code).ToListAsync(cancellationToken);
+        foreach (var code in reagentCodes)
+        {
+            await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, code, "ReagentRackPosition", null, null, true, now, cancellationToken);
+        }
+
+        var dabCodes = await dbContext.DabMixPositions.Select(x => x.Code).ToListAsync(cancellationToken);
+        foreach (var code in dabCodes)
+        {
+            await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, code, "DabMixPosition", null, null, true, now, cancellationToken);
+        }
+
+        var washCodes = await dbContext.WashPositions.Select(x => x.Code).ToListAsync(cancellationToken);
+        foreach (var code in washCodes)
+        {
+            await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, code, "WashPosition", null, null, true, now, cancellationToken);
+        }
+
+        // Sample scanner calibration/test reference only. The arm-mounted sample
+        // scanner (DCR55) is a tool reference, not a fixed per-version movement
+        // target (the arm carries it to a slot/ScannerRegion, stops, then reads).
+        // Reagent scanning uses the fixed multi-channel scanner module, not arm
+        // movement. Kept as a non-required calibration point so legacy/seeded
+        // baselines still expose a named sample-scanner anchor without being
+        // enforced as an executable target by CoordinateProfileLifecycleService.
+        await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, "SampleScannerCalibrationPoint", "SampleScannerCalibration", null, null, true, now, cancellationToken);
+        await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, "DabA", "DabSourceBottle", null, null, true, now, cancellationToken);
+        await EnsureCoordinatePointAsync(coordinateProfileId, coordinateProfileVersionId, "DabB", "DabSourceBottle", null, null, true, now, cancellationToken);
     }
 
     private async Task EnsureCoordinatePointAsync(

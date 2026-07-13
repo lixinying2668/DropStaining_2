@@ -32,4 +32,13 @@
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 
+  <!--
+    数字孪生 (stainer_twin_fastapi) 移植所需的静态映射资产：前端控件注册表与控件→DB 映射清单。
+    作为嵌入资源打包，运行期由 TwinSnapshotService 通过程序集资源流一次性加载并缓存。
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Twin\Assets\frontend_registry.json" />
+    <EmbeddedResource Include="Infrastructure\Twin\Assets\frontend_db_mapping.csv" />
+  </ItemGroup>
+
 </Project>

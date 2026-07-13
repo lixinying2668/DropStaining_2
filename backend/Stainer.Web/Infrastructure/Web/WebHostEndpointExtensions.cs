@@ -24,6 +24,7 @@ public static partial class WebHostEndpointExtensions
         MapTaskAndReagentEndpoints(app);
         MapRunEndpoints(app);
         MapCompatibilityEndpoints(app, legacyRuntimeCompatibilityEnabled);
+        MapTwinEndpoints(app);
         MapFallbackEndpoint(app);
     }
 

@@ -6,6 +6,7 @@ using Stainer.Web.Application.Devices;
 using Stainer.Web.Infrastructure.Devices;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Repositories;
+using Stainer.Web.Infrastructure.Twin;
 using Stainer.Web.Infrastructure.Web;
 
 namespace Stainer.Web.Infrastructure;
@@ -109,6 +110,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RunControlService>();
         services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
+        services.AddSingleton<TwinSnapshotService>();
 
         return services;
     }

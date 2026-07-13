@@ -1,8 +1,0 @@
-8000 是旧 FastAPI/Python 原型常用端口，现在不要作为正式运行入口使用，也不要让它和 C# 服务同时作为主服务跑，避免页面和 API 数据源混乱。
-
-启动：
-dotnet run --project backend\Stainer.Web\Stainer.Web.csproj
-
-浏览器打开：
-http://127.0.0.1:5205
-
