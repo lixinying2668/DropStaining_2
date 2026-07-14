@@ -2881,6 +2881,61 @@ function reagentTypeLabel(item) {
   if(item.category !== '试剂区') return '';
   return reagentType(item).label;
 }
+function letterForChannel(channelId) { return 'ABCD'[(channelId - 1)] || 'A'; }
+
+// 样本入库 = 创建染色任务。注意：当前后端没有专用的「样本扫码器/样本入库」硬件 API，
+// 只有 /api/device/reagent-scanner/qr/*（试剂扫码器）。样本侧的真实落点是任务创建链路，
+// 因此这里走 channel-batches/active + experiment-type-selection + tasks/he|ihc，
+// 绝不误接到 reagent-scanner/qr。硬件样本扫码器入库 API 待后端补充（TODO）。
+async function intakeChannelSamples(channelId) {
+  const letter = letterForChannel(channelId);
+  const ch = channels[channelId - 1];
+  if(!ch) return;
+  if(channelScanningBusy) { log(`通道${letter} 扫码繁忙，请稍后再试`, 'warn', channelId); return; }
+  const experimentType = String(prompt(`通道 ${letter} 样本入库\n实验类型（HE / IHC）：`, 'HE') || '').trim().toUpperCase();
+  if(!['HE','IHC'].includes(experimentType)) { log(`通道${letter} 样本入库已取消`, 'warn', channelId); return; }
+  let rawCode = '';
+  if(experimentType === 'IHC') {
+    rawCode = String(prompt(`通道 ${letter} IHC：输入样本码 / 一抗码`, 'P01') || '').trim();
+    if(!rawCode) { log('IHC 样本需要样本码 / 一抗码', 'warn', channelId); return; }
+  }
+  channelScanningBusy = true;
+  try {
+    setInfoPanel(`通道${letter} 样本入库中`, ['正在建立通道批次并创建任务...']);
+    const activeResp = await writeApi('/api/channel-batches/active', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-active'), drawerCode: letter }) });
+    if(activeResp?.workflowSelectionStatus !== 'Selected') {
+      await writeApi('/api/channel-batches/experiment-type-selection', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-exp-type'), drawerCode: letter, experimentType }) });
+    }
+    const channelBatchId = activeResp?.channelBatchId || null;
+    if(!channelBatchId) { log(`通道${letter} 未获取到活动通道批次`, 'err', channelId); return; }
+    let lis = null;
+    if(experimentType === 'IHC') {
+      lis = await writeApi('/api/lis/mock-query', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('lis-query'), rawCode }) });
+    }
+    let created = null, stopped = false, lastSlotCode = '';
+    for(let slotNo=1; slotNo<=4 && !stopped; slotNo++) {
+      const slotCode = `${letter}-${String(slotNo).padStart(2,'0')}`;
+      lastSlotCode = slotCode;
+      const body = experimentType === 'HE'
+        ? { commandId: makeCommandId('task-he'), slotCode, drawerCode: letter, channelBatchId }
+        : { commandId: makeCommandId('task-ihc'), inputMode:'PrimaryAntibody', rawCode, slotCode, drawerCode: letter, channelBatchId, selectedPrimaryAntibodyCode: lis?.candidatePrimaryAntibodyCodes?.[0] || rawCode, lisQueryLogId: lis?.lisQueryLogId || null };
+      try {
+        created = await backendApi('/api/tasks/' + (experimentType === 'HE' ? 'he' : 'ihc'), { method:'POST', body: JSON.stringify(body) });
+        log(`通道${letter} 样本入库完成：${slotCode} (${experimentType})`, 'ok', channelId);
+        break;
+      } catch(err) {
+        if(err?.status === 409 && (err?.data?.code === 'slot_not_idle' || /not idle/i.test(err.message || ''))) { continue; }
+        routeWriteError(err); stopped = true;
+      }
+    }
+    if(stopped) { /* non-slot error already routed */ }
+    else if(!created) { log(`通道${letter} 1-4 号位均不可用（无空闲 Slot）`, 'warn', channelId); }
+    else { ch.barcodeReady = true; }
+    await loadDatabaseSnapshot();
+  } catch(err) { /* routed by writeApi */ }
+  finally { channelScanningBusy = false; }
+}
+
 async function startChannelBarcode(channelId) {
   const ch = channels[channelId - 1]; if(!ch) return;
   if(channelScanningBusy) {
@@ -3206,7 +3261,7 @@ function drawTrays() {
     const startBtn = clickableGroup('g', controlAttrs(startId, { 'data-channel-start': c }));
     startBtn.appendChild(el('rect', { id:`${startId}-rect`, x:sx-sw/2, y:sy-sh/2, width:sw, height:sh, class:`channel-start-btn ${channels[c-1]?.barcodeReady?'active':''}` }));
     const startText = textSvg(sx, sy, '开始', 'channel-start-btn-text'); startText.setAttribute('id', `${startId}-label`); startBtn.appendChild(startText);
-    startBtn.addEventListener('click', evt => { evt.stopPropagation(); selectSvgControl(startBtn); startChannelBarcode(c); });
+    startBtn.addEventListener('click', evt => { evt.stopPropagation(); selectSvgControl(startBtn); intakeChannelSamples(c); });
     traysLayer.appendChild(startBtn);
     const [bx, by] = mmToPx(x, minY - 4.7);
     const bw = mmSize(24), bh = mmSize(8.5);
@@ -3773,6 +3828,79 @@ function renderWellEngineeringEditor(item, baseId) {
 function renderObjectPipetteEditor(item, baseId) {
   return `<section class="object-engineering-card" id="${baseId}-pipette-card" data-control-id="${baseId}-pipette-card"><strong>通道移液测试<span class="engineering-pill">当前孔位</span></strong><div class="object-form-grid three"><label>孔位<input id="${baseId}-pipette-well" data-control-id="${baseId}-pipette-well" value="${escapeHtml(item.name)}" readonly></label><label>液量 / μL<input id="${baseId}-pipette-volume" data-control-id="${baseId}-pipette-volume" type="number" value="100"></label><label>控制针<select id="${baseId}-pipette-needle" data-control-id="${baseId}-pipette-needle"><option>Z1</option><option>Z2</option><option>双针</option></select></label></div><div class="object-actions"><button type="button" class="primary-lite" data-object-action="吸液" data-object-name="${escapeHtml(item.name)}">吸液</button><button type="button" data-object-action="打液" data-object-name="${escapeHtml(item.name)}">打液</button><button type="button" data-object-action="打系统液" data-object-name="${escapeHtml(item.name)}">打系统液</button><button type="button" data-object-action="液面探测" data-object-name="${escapeHtml(item.name)}">液面探测</button><button type="button" class="warn-lite" data-object-action="清空通道" data-object-name="${escapeHtml(item.name)}">清空通道</button><button type="button" data-object-action="停止动作" data-object-name="${escapeHtml(item.name)}">停止动作</button></div></section>`;
 }
+// 对象化工程动作统一分发器。按 action + item.category 路由到真实后端命令。
+// US-403 先接「试剂条码扫描」族；吸液/打液/温控/液路/孔位/ROI 等族在 US-404 接入。
+async function dispatchObjectAction(action, item, baseId, btn) {
+  if(btn) flashControl(btn);
+  const name = item?.name || '';
+  const isReagent = item?.category === '试剂区';
+  try {
+    if(isReagent) {
+      const rackCode = reagentRackCodeFromItem(item);
+      if(action === '开始试剂条码扫描') return await reagentPositionScan(rackCode, 'scan', name);
+      if(action === '停止试剂条码扫描') return await reagentPositionScan(rackCode, 'stop', name);
+      if(action === '清空试剂条码') return await reagentPositionScan(rackCode, 'clear', name);
+    }
+    log(`${action}：${name} 暂未接入后端（模拟队列）`, 'warn');
+  } catch(err) { /* routed by writeApi where used */ }
+}
+
+async function ensureReagentScanSession() {
+  const overview = await backendApi('/api/reagents/scan-sessions/overview');
+  if(overview?.activeSession?.scanSessionId) return overview.activeSession.scanSessionId;
+  const started = await writeApi('/api/reagents/scan-sessions/start', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('reagent-scan-start') }) });
+  return started?.session?.scanSessionId || null;
+}
+
+async function completeReagentScanSession() {
+  try {
+    const overview = await backendApi('/api/reagents/scan-sessions/overview');
+    const sid = overview?.activeSession?.scanSessionId;
+    if(!sid) { log('当前没有活动的试剂扫码会话', 'warn'); return; }
+    await writeApi(`/api/reagents/scan-sessions/${encodeURIComponent(sid)}/complete`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('reagent-scan-complete') }) });
+    log('试剂扫码会话已完成', 'ok');
+    await loadDatabaseSnapshot();
+  } catch(err) { /* routed by writeApi */ }
+}
+
+// twin 试剂位命名为 试剂_S<col><row>（col=通道1-5, row=瓶位1-8）；后端 ReagentRackPosition.Code 为
+// 列主序 R{positionNo}，positionNo=(col-1)*8+row（实测 R1=col1row1, R8=col1row8, R9=col2row1, R40=col5row8）。
+function reagentRackCodeFromItem(item) {
+  const col = Number(item?.col), row = Number(item?.row);
+  if(Number.isFinite(col) && Number.isFinite(row) && col >= 1 && col <= 5 && row >= 1 && row <= 8) return `R${(col - 1) * 8 + row}`;
+  const m = /S\s*(\d)\s*(\d)/i.exec(String(item?.name || ''));
+  if(m) return `R${(Number(m[1]) - 1) * 8 + Number(m[2])}`;
+  return String(item?.name || '');
+}
+
+// 试剂位扫码：rackCode 形如 'R1'（后端 Code）。区分硬件扫码器控制(qr/*)与业务扫码会话(scan-confirm)。
+// 硬件命令成功后不直接伪造试剂位状态，试剂位 UI 以 /api/reagents/rack 或 snapshot 为准。
+async function reagentPositionScan(rackCode, mode, label) {
+  const display = label || rackCode;
+  try {
+    const scanSessionId = await ensureReagentScanSession();
+    if(!scanSessionId) { log('未能建立试剂扫码会话', 'err'); return; }
+    const qrAction = mode === 'stop' ? 'stop' : (mode === 'clear' ? 'clear' : 'start');
+    await writeApi(`/api/device/reagent-scanner/qr/${qrAction}`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('reagent-qr-' + qrAction), position: rackCode, scanSessionId }) });
+    if(mode === 'scan') {
+      const rawBarcode = String(prompt(`试剂位 ${display} (${rackCode})：输入扫描到的条码（Mock）`, 'HEM080220260712001') || '').trim();
+      if(!rawBarcode) { log(`试剂位 ${display} (${rackCode}) 扫码已取消`, 'warn'); return; }
+      await writeApi('/api/device/reagent-scanner/qr/report', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('reagent-qr-report'), position: rackCode, scanSessionId, text: rawBarcode }) });
+      await writeApi('/api/reagents/scan-confirm', { method:'POST', body: JSON.stringify({
+        commandId: makeCommandId('reagent-scan-confirm'),
+        scanSessionId,
+        items: [{ position: rackCode, scanResult: 'VALID', rawBarcode, locatorCode: rackCode }]
+      }) });
+      log(`试剂位 ${display} (${rackCode}) 扫码并确认完成`, 'ok');
+    } else if(mode === 'stop') {
+      log(`试剂位 ${display} (${rackCode}) 扫描已停止`, 'ok');
+    } else {
+      log(`试剂位 ${display} (${rackCode}) 条码已清空（硬件）`, 'ok');
+    }
+    await loadDatabaseSnapshot();
+  } catch(err) { /* routed by writeApi */ }
+}
+
 function bindObjectEngineeringDetail(item, baseId) {
   const objectRoot = document.getElementById(`${baseId}-object-engineering`);
   if(!objectRoot) return;
@@ -3781,8 +3909,7 @@ function bindObjectEngineeringDetail(item, baseId) {
     btn.dataset.objectActionBound = 'true';
     btn.addEventListener('click', () => {
       const action = btn.getAttribute('data-object-action') || btn.textContent.trim();
-      log(`${action}：${item.name} 的对象化工程参数已进入模拟队列`, 'ok');
-      flashControl(btn);
+      dispatchObjectAction(action, item, baseId, btn);
     });
   });
 }
@@ -4213,34 +4340,132 @@ async function runPrecheck() {
   setButtonState('startBtn', { disabled:true });
   showSideTab('precheck');
   renderPrecheckList();
-  log('检测启动：按设备链路顺序执行检查', 'ok');
+  log('检测启动：读取后端设备初始化与运行前校验', 'ok');
+  let deviceInit = null;
+  let preflight = null;
+  try {
+    // 触发设备初始化(POST)，失败(如已有初始化在跑)则回退到读取最近一次记录(GET)
+    try {
+      deviceInit = await backendApi('/api/device-initialization', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('device-init') }) });
+    } catch(e) { deviceInit = await apiGetOrNull('/api/device-initialization'); }
+    preflight = await apiGetOrNull('/api/run/preflight');
+  } catch(err) {
+    precheckRunning = false;
+    setButtonState('startBtn', { disabled:false });
+    await loadDatabaseSnapshot();
+    return;
+  }
+  const deviceOk = !!deviceInit?.ok || !!deviceInit?.completedAtUtc;
+  const failures = (preflight?.issues || []).filter(x => String(x.severity || 'Fail').toLowerCase() !== 'warning');
+  const deviceFailure = failures.some(x => x.area === 'Device');
+  const reagentFailure = failures.some(x => x.area === 'Reagents');
+  const realResults = {};
+  PRECHECK_STEPS.forEach((step, idx) => {
+    const isReagentStep = idx >= 7;
+    realResults[step.label] = isReagentStep ? !reagentFailure : (deviceOk && !deviceFailure);
+  });
+  window.digitalTwinPrecheckResults = realResults;
+  window.digitalTwinPrecheckFailures = [];
   for(let i=0; i<PRECHECK_STEPS.length; i++) {
     precheckState[i] = 'running';
     renderPrecheckList();
     log(`检测：${PRECHECK_STEPS[i].label}`, '');
-    await sleep(260);
-    const precheckResults = window.digitalTwinPrecheckResults || {};
-    const precheckFailures = window.digitalTwinPrecheckFailures || [];
-    const ok = precheckResults[PRECHECK_STEPS[i].label] !== false && !precheckFailures.includes(PRECHECK_STEPS[i].label);
+    await sleep(180);
+    const ok = realResults[PRECHECK_STEPS[i].label] !== false;
     precheckState[i] = ok ? 'pass' : 'error';
     renderPrecheckList();
     if(!ok) {
       precheckRunning = false;
       precheckPassed = false;
       setButtonState('startBtn', { disabled:true });
+      const failText = document.getElementById('settingsPrecheckText'); if(failText) failText.textContent = '未完成';
       setInfoPanel('检测未通过', [`失败项：${PRECHECK_STEPS[i].label}`, '请处理异常后重新检测。']);
       log(`检测失败：${PRECHECK_STEPS[i].label}`, 'err');
+      await loadDatabaseSnapshot();
       return;
     }
-    await sleep(90);
+    await sleep(60);
   }
   precheckRunning = false;
-  precheckPassed = true;
-  const settingsPreText = document.getElementById('settingsPrecheckText'); if(settingsPreText) settingsPreText.textContent = '已通过';
-  setButtonState('startBtn', { disabled:false });
+  precheckPassed = !!preflight?.ok && Object.values(realResults).every(v => v !== false);
+  const settingsPreText = document.getElementById('settingsPrecheckText'); if(settingsPreText) settingsPreText.textContent = precheckPassed ? '已通过' : '未完成';
+  setButtonState('startBtn', { disabled:!precheckPassed });
   renderPrecheckList();
-  setInfoPanel('检测通过', ['主控、机械臂、制冷、扫码器、液位传感器、洗针和废液/排毒桶状态均正常。', '现在可以点击顶部“开始”执行染色流程。']);
-  log('检测通过：开始按钮已启用', 'ok');
+  setInfoPanel(precheckPassed ? '检测通过' : '检测未通过', precheckPassed
+    ? ['主控、机械臂、制冷、扫码器、液位传感器、洗针和废液/排毒桶状态均正常。', '现在可以点击顶部“开始”执行染色流程。']
+    : ['后端预检或设备初始化未通过，请处理异常后重新检测。']);
+  log(precheckPassed ? '检测通过：开始按钮已启用' : '检测未通过：后端预检或设备初始化异常', precheckPassed ? 'ok' : 'err');
+  await loadDatabaseSnapshot();
+}
+
+async function collectStainingTaskIds() {
+  try {
+    const snap = await backendApi('/api/operator/snapshot');
+    return (snap?.channels || [])
+      .flatMap(ch => ch.slides || [])
+      .map(s => s?.stainingTaskId)
+      .filter(Boolean);
+  } catch(err) { return []; }
+}
+
+async function startRealRun() {
+  if(running) return;
+  setButtonState('startBtn', { disabled:true });
+  try {
+    const report = await writeApi('/api/run/preflight', { method:'GET' });
+    if(!report?.ok) {
+      log('启动前校验未通过，请先完成检测', 'err');
+      showSideTab('precheck');
+      renderPrecheckList();
+      setButtonState('startBtn', { disabled:!precheckPassed });
+      return;
+    }
+    let run = await apiGetOrNull('/api/runs/current');
+    if(!run || ['Completed','Stopped','completed','stopped'].includes(run.status)) {
+      const taskIds = await collectStainingTaskIds();
+      if(!taskIds.length) {
+        setInfoPanel('暂无可运行任务', ['请先扫码/创建任务后再开始。']);
+        log('没有可运行的任务：请先扫码/创建任务', 'warn');
+        setButtonState('startBtn', { disabled:!precheckPassed });
+        return;
+      }
+      const created = await writeApi('/api/runs', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('run-create'), stainingTaskIds: taskIds, preflightStateHash: report.stateHash || null }) });
+      run = await apiGetOrNull(`/api/runs/${encodeURIComponent(created.runId)}`) || { id: created.runId, status: created.status };
+    }
+    const runId = run?.id || run?.runId;
+    if(!runId) { log('未获取到运行 ID', 'err'); setButtonState('startBtn', { disabled:!precheckPassed }); return; }
+    await writeApi(`/api/runs/${encodeURIComponent(runId)}/start`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('run-start'), preflightStateHash: report.stateHash || null }) });
+    running = true; paused = false; cancelAnimation = false;
+    setButtonState('startBtn', { disabled:true }); setButtonState('pauseBtn', { disabled:false, textContent:'暂停' });
+    log('运行已启动', 'ok');
+    await loadDatabaseSnapshot();
+  } catch(err) {
+    setButtonState('startBtn', { disabled:!precheckPassed });
+  }
+}
+
+async function pauseOrResumeRun() {
+  try {
+    const run = await apiGetOrNull('/api/runs/current');
+    const runId = run?.id || run?.runId;
+    if(!runId) { log('当前没有可暂停/恢复的运行', 'warn'); return; }
+    const status = String(run.status || '').toLowerCase();
+    if(status === 'paused') {
+      await writeApi(`/api/runs/${encodeURIComponent(runId)}/resume`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('run-resume') }) });
+      paused = false;
+      log('运行已恢复', 'ok');
+    } else if(status === 'running') {
+      await writeApi(`/api/runs/${encodeURIComponent(runId)}/pause`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('run-pause') }) });
+      paused = true;
+      log('运行已暂停', 'ok');
+    } else {
+      log(`当前运行状态为「${run.status || '未知'}」，无法暂停/恢复（仅 Running 可暂停、Paused 可恢复）`, 'warn');
+      return;
+    }
+    const pauseBtnEl = document.getElementById('pauseBtn');
+    if(pauseBtnEl) pauseBtnEl.textContent = paused ? '继续' : '暂停';
+    await loadDatabaseSnapshot();
+  } catch(err) { /* routed by writeApi */ }
 }
 
 function parseCsv(text) {
@@ -5443,17 +5668,53 @@ async function backendApi(path, options={}) {
   const res = await fetch(path, Object.assign({ credentials:'same-origin', cache:'no-store' }, options, { headers }));
   if(!res.ok) {
     let detail = '';
+    let payload = null;
     try {
-      const payload = await res.json();
+      payload = await res.json();
       detail = payload.detail || payload.message || payload.code || '';
     } catch(e) {
       try { detail = await res.text(); } catch(_) {}
     }
-    throw new Error(detail || `HTTP ${res.status}`);
+    const apiErr = new Error(detail || `HTTP ${res.status}`);
+    apiErr.status = res.status;
+    apiErr.data = payload;
+    throw apiErr;
   }
   if(res.status === 204) return null;
   const text = await res.text();
   return text ? JSON.parse(text) : null;
+}
+function routeWriteError(err) {
+  const status = err?.status;
+  const detail = err?.message || '';
+  if(status === 401) {
+    CURRENT_USER = { id:'', username:'', name:'未登录', role:'guest' };
+    applyUserRoleUi(); renderUserMenu(); setLoginVisible(true);
+    log('登录已失效，请重新登录', 'err');
+  } else if(status === 403) {
+    log(`权限不足：${detail || '当前身份无法执行该操作'}`, 'err');
+  } else if(status === 400 || status === 409) {
+    log(`请求未通过：${detail || '请检查输入后重试'}`, 'err');
+  } else {
+    log(`操作失败：${detail || '请稍后重试'}`, 'err');
+  }
+}
+async function writeApi(path, options={}) {
+  try {
+    return await backendApi(path, options);
+  } catch(err) {
+    routeWriteError(err);
+    throw err;
+  }
+}
+async function apiGetOrNull(path) {
+  try {
+    return await backendApi(path);
+  } catch(err) {
+    if(err?.status === 404) return null;
+    routeWriteError(err);
+    throw err;
+  }
 }
 function normalizeBackendUser(user) {
   const roles = Array.isArray(user?.roles) && user.roles.length ? user.roles : [user?.role || 'operator'];
@@ -5881,8 +6142,8 @@ function initLayoutResize() {
 svg.addEventListener('click', () => { selectedName = null; selectedSvgControlId = null; document.querySelectorAll('.svg-control-selected').forEach(el => el.classList.remove('svg-control-selected')); renderDetail(null); showSideTab('status'); updateVisualStates(); });
 initLayoutResize();
 updateSideHeaderStatus();
-bindClick('startBtn', () => { if(!precheckPassed) { showSideTab('precheck'); renderPrecheckList(); log('开始前需要先完成检测', 'warn'); return; } cancelAnimation=false; showSideTab('status'); showQueueInfo(); runDemo(); });
-bindClick('pauseBtn', () => { if(!precheckPassed) { showSideTab('precheck'); renderPrecheckList(); log('暂停前需要先完成检测', 'warn'); return; } if(!running) { showSideTab('status'); setInfoPanel('当前没有可暂停的流程', ['流程开始后，该按钮会暂停当前机械臂动作。']); log('当前没有可暂停的流程', 'warn'); return; } paused = !paused; const pauseBtn = document.getElementById('pauseBtn'); if(pauseBtn) pauseBtn.textContent = paused ? '继续' : '暂停'; setInfoPanel(paused ? '流程已暂停' : '流程继续运行', ['流程队列详情统一显示在此区域。']); log(paused?'流程已暂停':'流程继续运行', paused?'warn':'ok'); });
+bindClick('startBtn', () => { showSideTab('status'); startRealRun(); });
+bindClick('pauseBtn', () => { pauseOrResumeRun(); });
 bindClick('resetBtn', () => { setInfoPanel('系统复位', ['机械臂返回洗内针原点，流程状态和缓存数据已清空。']); resetDemo(); });
 bindClick('scanSamplesBtn', scanSamples);
 bindClick('scanReagentsBtn', scanReagents);
