@@ -3746,7 +3746,14 @@ function animateArmTo(x, y, z1, z2, duration=900) {
     requestAnimationFrame(frame);
   });
 }
+function runtimeStepTarget(step) {
+  const match = String(step?.slotCode || '').toUpperCase().match(/^([A-D])-(0?[1-4])$/);
+  if(!match) return null;
+  const channelNo = match[1].charCodeAt(0) - 64;
+  return findTarget(`R${channelNo}${Number(match[2])}`) || null;
+}
 function applyRuntimeDrivenState(nextRuntime, nextArm) {
+  let runtimeStep = null;
   if(nextRuntime) {
     runtimeState = nextRuntime;
     const status = String(nextRuntime.status || '').toLowerCase();
@@ -3754,6 +3761,7 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
     paused = status === 'paused';
     currentStepIndex = Number(nextRuntime.completedStepCount || 0);
     const step = nextRuntime.currentStep || null;
+    runtimeStep = step;
     if(step?.id && step.id !== lastRuntimeStepId) {
       lastRuntimeStepId = step.id;
       const channelText = step.drawerCode ? `通道 ${step.drawerCode} · ` : '';
@@ -3764,18 +3772,19 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
     if(status === 'faulted') setPhaseText('故障');
   }
 
-  if(!nextArm) return;
+  const stepTarget = runtimeStepTarget(runtimeStep);
+  if(!nextArm && !stepTarget) return;
   const end = {
-    x:Number(nextArm.x ?? arm.x), y:Number(nextArm.y ?? arm.y),
-    z1:Number(nextArm.z1 ?? arm.z1), z2:Number(nextArm.z2 ?? arm.z2)
+    x:Number(nextArm?.x ?? stepTarget?.x ?? arm.x), y:Number(nextArm?.y ?? stepTarget?.y ?? arm.y),
+    z1:Number(nextArm?.z1 ?? (running ? .65 : arm.z1)), z2:Number(nextArm?.z2 ?? (running ? .35 : arm.z2))
   };
   const distance = Math.hypot(end.x - arm.x, end.y - arm.y, end.z1 - arm.z1, end.z2 - arm.z2);
+  const sequence = ++runtimeArmAnimationSeq;
   if(!running || distance < 0.01) {
     arm = {...arm, ...end};
     updateArmVisual();
     return;
   }
-  const sequence = ++runtimeArmAnimationSeq;
   const start = {...arm};
   const startedAt = performance.now();
   const duration = Math.max(350, Math.min(1800, distance * 12));
@@ -4661,6 +4670,42 @@ async function collectStainingTaskIds() {
   } catch(err) { return []; }
 }
 
+async function ensureMockDabBatch(taskIds) {
+  if(uiMode !== 'twin' || !Array.isArray(taskIds) || !taskIds.length) return null;
+  const requestedTaskIds = [...new Set(taskIds.map(String))].sort();
+  const positions = await backendApi('/api/dab/positions');
+  const activeBatchIds = [...new Set((Array.isArray(positions) ? positions : [])
+    .map(x => x?.activeDabBatchId)
+    .filter(Boolean))];
+  for(const batchId of activeBatchIds) {
+    const batch = await apiGetOrNull(`/api/dab/batches/${encodeURIComponent(batchId)}`);
+    if(!batch) continue;
+    const existingTaskIds = [...new Set((batch.taskIds || []).map(String))].sort();
+    const sameTasks = existingTaskIds.length === requestedTaskIds.length
+      && existingTaskIds.every((id, index) => id === requestedTaskIds[index]);
+    const reusable = ['pendingpreparation','preparing','available'].includes(String(batch.status || '').toLowerCase())
+      && String(batch.cleaningStatus || '').toLowerCase() !== 'required';
+    if(sameTasks && reusable) {
+      log(`复用已有 DAB 批次 ${batch.positionCode || batchId}`, 'ok');
+      return batch;
+    }
+  }
+  const sources = await backendApi('/api/dab/sources');
+  const bottles = Array.isArray(sources) ? sources : [];
+  const dabA = bottles.find(x => String(x.reagentCode || '').toUpperCase() === 'DBA' && String(x.status || '').toLowerCase() === 'available');
+  const dabB = bottles.find(x => String(x.reagentCode || '').toUpperCase() === 'DBB' && String(x.status || '').toLowerCase() === 'available');
+  if(!dabA || !dabB) throw new Error('Mock DAB 配液需要可用的 DBA 和 DBB 试剂瓶，请重新扫描全部试剂。');
+  return await writeApi('/api/dab/batches', {
+    method:'POST',
+    body:JSON.stringify({
+      commandId:makeCommandId('mock-dab-batch'),
+      taskIds,
+      dabAReagentBottleId:dabA.id,
+      dabBReagentBottleId:dabB.id
+    })
+  });
+}
+
 async function startRealRun() {
   if(running) return;
   setButtonState('startBtn', { disabled:true });
@@ -4676,7 +4721,15 @@ async function startRealRun() {
       return;
     }
     let run = await apiGetOrNull('/api/runs/current');
-    if(!run || ['Completed','Stopped','completed','stopped'].includes(run.status)) {
+    const currentRunStatus = String(run?.status || '').toLowerCase();
+    if(currentRunStatus === 'faulted') {
+      setInfoPanel('存在待处理的故障运行', ['请先停止或完成故障恢复，再创建新的染色运行。']);
+      log('启动失败：当前仍有待处理的故障运行', 'err');
+      setButtonState('startBtn', { disabled:!precheckPassed });
+      return;
+    }
+    const terminalRunStatuses = ['completed', 'stopped', 'failed', 'unknown'];
+    if(!run || terminalRunStatuses.includes(currentRunStatus)) {
       const taskIds = await collectStainingTaskIds();
       if(!taskIds.length) {
         setInfoPanel('暂无可运行任务', ['请先扫码/创建任务后再开始。']);
@@ -4684,6 +4737,7 @@ async function startRealRun() {
         setButtonState('startBtn', { disabled:!precheckPassed });
         return;
       }
+      await ensureMockDabBatch(taskIds);
       const created = await writeApi('/api/runs', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('run-create'), stainingTaskIds: taskIds, preflightStateHash: report.stateHash || null }) });
       run = await apiGetOrNull(`/api/runs/${encodeURIComponent(created.runId)}`) || { id: created.runId, status: created.status };
     }
@@ -4695,6 +4749,9 @@ async function startRealRun() {
     log('运行已启动', 'ok');
     await loadDatabaseSnapshot();
   } catch(err) {
+    const message = err?.message || String(err || '未知错误');
+    setInfoPanel('启动失败', [`启动染色运行失败：${message}`]);
+    log(`启动失败：${message}`, 'err');
     setButtonState('startBtn', { disabled:!precheckPassed });
   }
 }
