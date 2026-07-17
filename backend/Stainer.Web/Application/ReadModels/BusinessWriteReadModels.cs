@@ -64,7 +64,9 @@ public sealed record ChannelBatchActivationResponse(
     string DrawerCode,
     string Status,
     string WorkflowSelectionStatus,
-    string Message);
+    string Message,
+    string? ExperimentType = null,
+    IReadOnlyList<string>? OccupiedSlotCodes = null);
 
 public sealed record TaskWorkflowCandidateResponse(
     string WorkflowVersionId,

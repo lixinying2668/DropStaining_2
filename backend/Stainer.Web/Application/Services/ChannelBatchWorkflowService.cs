@@ -227,6 +227,7 @@ public sealed class ChannelBatchWorkflowService(
                 }
 
                 var activeBatches = await dbContext.ChannelBatches
+                    .Include(x => x.SlideTasks)
                     .Where(x => x.DrawerId == drawer.Id && ActiveBatchStatuses.Contains(x.Status))
                     .ToListAsync(cancellationToken);
                 var existing = activeBatches
@@ -267,7 +268,12 @@ public sealed class ChannelBatchWorkflowService(
                         batch.DrawerCode,
                         batch.Status,
                         batch.WorkflowSelectionStatus,
-                        existing is null ? "Channel batch created." : "Active channel batch exists."),
+                        existing is null ? "Channel batch created." : "Active channel batch exists.",
+                        batch.ExperimentType,
+                        batch.SlideTasks
+                            .OrderBy(x => x.SlotCode)
+                            .Select(x => x.SlotCode)
+                            .ToList()),
                     "ChannelBatch",
                     batch.Id);
             },
