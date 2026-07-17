@@ -7346,6 +7346,14 @@ function loadDatabaseSnapshot() {
   const promise = (async () => {
     try {
       const response = await fetch('/api/twin/snapshot', { cache:'no-store', credentials:'same-origin' });
+      if(response.status === 401) {
+        stopRealtimeSync();
+        CURRENT_USER = { id:'', username:'', name:'未登录', role:'guest' };
+        applyUserRoleUi();
+        renderUserMenu();
+        setLoginVisible(true);
+        return;
+      }
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const snapshot = await response.json();
       window.digitalTwinDbSnapshot = snapshot;

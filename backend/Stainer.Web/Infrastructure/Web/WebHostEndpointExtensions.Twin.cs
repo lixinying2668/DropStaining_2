@@ -19,32 +19,44 @@ public static partial class WebHostEndpointExtensions
 
         app.MapGet("/api/twin/snapshot", async (HttpContext context, UserSessionService sessionService, TwinSnapshotService service, CancellationToken cancellationToken) =>
         {
-            _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-            return Results.Json(service.BuildSnapshot(), TwinSnapshotService.JsonOptions);
+            return await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Json(service.BuildSnapshot(), TwinSnapshotService.JsonOptions);
+            });
         });
 
         app.MapGet("/api/twin/value/{controlId}", async (HttpContext context, string controlId, UserSessionService sessionService, TwinSnapshotService service, CancellationToken cancellationToken) =>
         {
-            _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-            var value = service.GetControlValue(controlId);
-            return Results.Json(new Dictionary<string, object?>
+            return await ExecuteBusinessAsync(async () =>
             {
-                ["control_id"] = controlId,
-                ["value"] = value,
-            }, TwinSnapshotService.JsonOptions);
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                var value = service.GetControlValue(controlId);
+                return Results.Json(new Dictionary<string, object?>
+                {
+                    ["control_id"] = controlId,
+                    ["value"] = value,
+                }, TwinSnapshotService.JsonOptions);
+            });
         });
 
         app.MapGet("/api/twin/mapping", async (HttpContext context, HttpRequest request, UserSessionService sessionService, TwinSnapshotService service, CancellationToken cancellationToken) =>
         {
-            _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-            var status = (string?)request.Query["status"];
-            return Results.Json(service.GetMappingRows(string.IsNullOrEmpty(status) ? null : status), TwinSnapshotService.JsonOptions);
+            return await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                var status = (string?)request.Query["status"];
+                return Results.Json(service.GetMappingRows(string.IsNullOrEmpty(status) ? null : status), TwinSnapshotService.JsonOptions);
+            });
         });
 
         app.MapGet("/api/twin/mapping.csv", async (HttpContext context, UserSessionService sessionService, TwinSnapshotService service, CancellationToken cancellationToken) =>
         {
-            _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-            return Results.File(service.GetMappingCsv(), "text/csv; charset=utf-8", "frontend_db_mapping.csv");
+            return await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.File(service.GetMappingCsv(), "text/csv; charset=utf-8", "frontend_db_mapping.csv");
+            });
         });
     }
 }

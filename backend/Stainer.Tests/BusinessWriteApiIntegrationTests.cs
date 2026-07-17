@@ -16,6 +16,19 @@ namespace Stainer.Tests;
 public sealed class BusinessWriteApiIntegrationTests
 {
     [Fact]
+    public async Task Twin_snapshot_without_login_returns_structured_unauthorized_response()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/twin/snapshot");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("authentication_required", payload.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task Twin_snapshot_control_values_exclude_structural_configuration_controls()
     {
         await using var factory = CreateFactory();
@@ -362,9 +375,9 @@ public sealed class BusinessWriteApiIntegrationTests
 
         var workflows = await adminClient.GetFromJsonAsync<List<WorkflowSummaryResponse>>("/api/workflows");
         Assert.NotNull(workflows);
-        var seededHeVersion = workflows!.Single(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode)
+        var seededHeVersion = workflows!.Single(x => x.Code == ReferenceDataSeeder.DefaultHeWorkflowCode)
             .Versions.Single(x => x.Status == WorkflowVersionStatus.Published);
-        var seededIhcVersion = workflows.Single(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode)
+        var seededIhcVersion = workflows.Single(x => x.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode)
             .Versions.Single(x => x.Status == WorkflowVersionStatus.Published);
 
         var invalidMapping = await adminClient.PostAsJsonAsync("/api/primary-antibody-mappings", new
@@ -546,13 +559,13 @@ public sealed class BusinessWriteApiIntegrationTests
 
         var workflows = await client.GetFromJsonAsync<List<WorkflowSummaryResponse>>("/api/workflows");
         Assert.NotNull(workflows);
-        var he = workflows!.Single(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode);
+        var he = workflows!.Single(x => x.Code == ReferenceDataSeeder.DefaultHeWorkflowCode);
         var heVersion = he.Versions.Single(x => x.VersionNo == 1);
         Assert.Equal("测试 HE 流程", he.Name);
         Assert.Equal(StainingTaskType.He, he.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, heVersion.Status);
 
-        var ihc = workflows.Single(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode);
+        var ihc = workflows.Single(x => x.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode);
         var ihcVersion = ihc.Versions.Single(x => x.VersionNo == 1);
         Assert.Equal("测试 IHC 001-A", ihc.Name);
         Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);

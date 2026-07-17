@@ -134,7 +134,7 @@ public sealed class ReferenceDataSeederTests
             .ThenInclude(x => x.Steps)
             .Include(x => x.Versions)
             .ThenInclude(x => x.ReagentRequirements)
-            .SingleAsync(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode);
+            .SingleAsync(x => x.Code == ReferenceDataSeeder.DefaultHeWorkflowCode);
         var heVersion = he.Versions.Single(x => x.VersionNo == 1);
         Assert.Equal("测试 HE 流程", he.Name);
         Assert.Equal(StainingTaskType.He, he.WorkflowType);
@@ -151,7 +151,7 @@ public sealed class ReferenceDataSeederTests
             .ThenInclude(x => x.Steps)
             .Include(x => x.Versions)
             .ThenInclude(x => x.ReagentRequirements)
-            .SingleAsync(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode);
+            .SingleAsync(x => x.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode);
         var ihcVersion = ihc.Versions.Single(x => x.VersionNo == 1);
         Assert.Equal("测试 IHC 001-A", ihc.Name);
         Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);
@@ -204,10 +204,10 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal(firstSummary.RequiredReagentCodes, secondSummary.RequiredReagentCodes);
         Assert.True(secondSummary.HeIsDefault);
         Assert.True(secondSummary.IhcIsDefault);
-        Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode));
-        Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode));
-        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.ManualHeWorkflowCode && x.VersionNo == 1));
-        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.ManualIhcWorkflowCode && x.VersionNo == 1));
+        Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.DefaultHeWorkflowCode));
+        Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode));
+        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.DefaultHeWorkflowCode && x.VersionNo == 1));
+        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode && x.VersionNo == 1));
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.DefaultExperimentType == StainingTaskType.He));
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.DefaultExperimentType == StainingTaskType.Ihc));
         Assert.Equal(2, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.HeWorkflowVersionId));
