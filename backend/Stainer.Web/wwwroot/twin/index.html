@@ -2938,77 +2938,7 @@ function parseHeSlideSlots(input, drawerLetter) {
       return true;
     });
 }
-function parseIhcSlideSlotRows(input, drawerLetter) {
-  const rows = [];
-  const seen = new Set();
-  for(const line of String(input || '').split(/\r?\n|[;；]+/)) {
-    const trimmed = line.trim();
-    if(!trimmed) continue;
-    const parts = trimmed.split(/[=:：]/);
-    if(parts.length < 2) return { error:`格式错误：${trimmed}` };
-    const slotCode = normalizeSlideSlotInput(parts.shift(), drawerLetter);
-    const rawCode = parts.join(':').trim();
-    if(!slotCode) return { error:`槽位不属于通道 ${drawerLetter}：${trimmed}` };
-    if(!rawCode) return { error:`${slotCode} 缺少样本码/一抗码` };
-    if(seen.has(slotCode)) return { error:`槽位重复：${slotCode}` };
-    seen.add(slotCode);
-    rows.push({ slotCode, rawCode });
-  }
-  return { rows };
-}
 
-// 样本入库 = 创建染色任务。注意：当前后端没有专用的「样本扫码器/样本入库」硬件 API，
-// 只有 /api/device/reagent-scanner/qr/*（试剂扫码器）。样本侧的真实落点是任务创建链路，
-// 因此这里走 channel-batches/active + experiment-type-selection + tasks/he|ihc，
-// 绝不误接到 reagent-scanner/qr。硬件样本扫码器入库 API 待后端补充（TODO）。
-async function intakeChannelSamples(channelId) {
-  const letter = letterForChannel(channelId);
-  const ch = channels[channelId - 1];
-  if(!ch) return;
-  if(channelScanningBusy) { log(`通道${letter} 扫码繁忙，请稍后再试`, 'warn', channelId); return; }
-  const experimentType = String(prompt(`通道 ${letter} 样本入库\n实验类型（HE / IHC）：`, 'HE') || '').trim().toUpperCase();
-  if(!['HE','IHC'].includes(experimentType)) { log(`通道${letter} 样本入库已取消`, 'warn', channelId); return; }
-  let rawCode = '';
-  if(experimentType === 'IHC') {
-    rawCode = String(prompt(`通道 ${letter} IHC：输入样本码 / 一抗码`, 'P01') || '').trim();
-    if(!rawCode) { log('IHC 样本需要样本码 / 一抗码', 'warn', channelId); return; }
-  }
-  channelScanningBusy = true;
-  try {
-    setInfoPanel(`通道${letter} 样本入库中`, ['正在建立通道批次并创建任务...']);
-    const activeResp = await writeApi('/api/channel-batches/active', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-active'), drawerCode: letter }) });
-    if(activeResp?.workflowSelectionStatus !== 'Selected') {
-      await writeApi('/api/channel-batches/experiment-type-selection', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-exp-type'), drawerCode: letter, experimentType }) });
-    }
-    const channelBatchId = activeResp?.channelBatchId || null;
-    if(!channelBatchId) { log(`通道${letter} 未获取到活动通道批次`, 'err', channelId); return; }
-    let lis = null;
-    if(experimentType === 'IHC') {
-      lis = await writeApi('/api/lis/mock-query', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('lis-query'), rawCode }) });
-    }
-    let created = null, stopped = false, lastSlotCode = '';
-    for(let slotNo=1; slotNo<=4 && !stopped; slotNo++) {
-      const slotCode = `${letter}-${String(slotNo).padStart(2,'0')}`;
-      lastSlotCode = slotCode;
-      const body = experimentType === 'HE'
-        ? { commandId: makeCommandId('task-he'), slotCode, drawerCode: letter, channelBatchId }
-        : { commandId: makeCommandId('task-ihc'), inputMode:'PrimaryAntibody', rawCode, slotCode, drawerCode: letter, channelBatchId, selectedPrimaryAntibodyCode: lis?.candidatePrimaryAntibodyCodes?.[0] || rawCode, lisQueryLogId: lis?.lisQueryLogId || null };
-      try {
-        created = await backendApi('/api/tasks/' + (experimentType === 'HE' ? 'he' : 'ihc'), { method:'POST', body: JSON.stringify(body) });
-        log(`通道${letter} 样本入库完成：${slotCode} (${experimentType})`, 'ok', channelId);
-        break;
-      } catch(err) {
-        if(err?.status === 409 && (err?.data?.code === 'slot_not_idle' || /not idle/i.test(err.message || ''))) { continue; }
-        routeWriteError(err); stopped = true;
-      }
-    }
-    if(stopped) { /* non-slot error already routed */ }
-    else if(!created) { log(`通道${letter} 1-4 号位均不可用（无空闲 Slot）`, 'warn', channelId); }
-    else { ch.barcodeReady = true; }
-    await loadDatabaseSnapshot();
-  } catch(err) { /* routed by writeApi */ }
-  finally { channelScanningBusy = false; }
-}
 
 async function intakeChannelSamples(channelId) {
   const letter = letterForChannel(channelId);
@@ -3019,28 +2949,12 @@ async function intakeChannelSamples(channelId) {
   if(!['HE','IHC'].includes(experimentType)) { log(`通道${letter} 样本入库已取消`, 'warn', channelId); return; }
 
   let requestedSlides = [];
-  if(experimentType === 'HE') {
-    const slotInput = prompt(`通道 ${letter} HE：请输入实际放置玻片槽位\n可输入：1,3 或 ${letter}-01,${letter}-03`, '1');
-    requestedSlides = parseHeSlideSlots(slotInput, letter).map(slotCode => ({ slotCode, rawCode:null }));
-    if(!requestedSlides.length) { log(`通道${letter} 未选择任何 HE 玻片槽位`, 'warn', channelId); return; }
-  } else {
-    const ihcInput = prompt(`通道 ${letter} IHC：逐行输入 实际槽位=样本码/一抗码\n示例：\n1=P01\n3=P02`, '1=P01');
-    const parsed = parseIhcSlideSlotRows(ihcInput, letter);
-    if(parsed.error) { log(parsed.error, 'warn', channelId); return; }
-    requestedSlides = parsed.rows || [];
-    if(!requestedSlides.length) { log(`通道${letter} 未选择任何 IHC 玻片槽位`, 'warn', channelId); return; }
-  }
-
   channelScanningBusy = true;
   try {
-    setInfoPanel(`通道${letter} 样本入库中`, [
-      `实验类型：${experimentType}`,
-      `实际槽位：${requestedSlides.map(x => x.slotCode).join('、')}`,
-      '正在建立通道批次并创建任务...'
-    ]);
+    // 先读取通道批次与已选染色流程，让操作员在输入槽位前确认正在向哪个流程添加玻片。
+    setInfoPanel(`通道${letter} 样本入库准备中`, [`实验类型：${experimentType}`, '正在读取通道批次与已选染色流程...']);
     const activeResp = await writeApi('/api/channel-batches/active', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-active'), drawerCode: letter }) });
     const batchExperimentType = String(activeResp?.experimentType || '').toUpperCase();
-    const occupiedSlots = new Set((activeResp?.occupiedSlotCodes || []).map(x => String(x || '').toUpperCase()));
     if(batchExperimentType && batchExperimentType !== experimentType) {
       setInfoPanel(`通道${letter} 样本入库未执行`, [
         `当前通道批次类型：${batchExperimentType}`,
@@ -3050,6 +2964,44 @@ async function intakeChannelSamples(channelId) {
       log(`通道${letter} 已是 ${batchExperimentType} 批次，不能再加入 ${experimentType} 玻片`, 'warn', channelId);
       return;
     }
+    const occupiedSlots = new Set((activeResp?.occupiedSlotCodes || []).map(x => String(x || '').toUpperCase()));
+    if(activeResp?.workflowSelectionStatus !== 'Selected') {
+      const selectionResp = await writeApi('/api/channel-batches/experiment-type-selection', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-exp-type'), drawerCode: letter, experimentType }) });
+      if(selectionResp) {
+        if(!activeResp.selectedWorkflowName) activeResp.selectedWorkflowName = selectionResp.workflowName || null;
+        if(!activeResp.selectedWorkflowVersionLabel) activeResp.selectedWorkflowVersionLabel = selectionResp.workflowVersionLabel || null;
+        if(!activeResp.primaryAntibodyCode) activeResp.primaryAntibodyCode = selectionResp.primaryAntibodyCode || null;
+      }
+    }
+    const channelBatchId = activeResp?.channelBatchId || null;
+    if(!channelBatchId) { log(`通道${letter} 未获取到活动通道批次`, 'err', channelId); return; }
+
+    // 汇总当前已选流程信息（HE/IHC 均显示流程名/版本；IHC 额外显示流程解析出的一抗）。
+    const workflowInfoLines = [];
+    if(activeResp?.selectedWorkflowName) workflowInfoLines.push(`已选流程：${activeResp.selectedWorkflowName}`);
+    if(activeResp?.selectedWorkflowVersionLabel) workflowInfoLines.push(`流程版本：${activeResp.selectedWorkflowVersionLabel}`);
+    if(experimentType === 'IHC') {
+      const paCode = activeResp?.primaryAntibodyCode || null;
+      if(paCode) {
+        const reagentName = [...itemReagentCodes.entries()].find(([, c]) => String(c || '').toUpperCase() === String(paCode).toUpperCase())?.[0];
+        workflowInfoLines.push(`流程一抗编码：${paCode}`);
+        workflowInfoLines.push(`试剂名称：${reagentName || paCode}`);
+      } else {
+        workflowInfoLines.push('流程一抗编码：未解析到一抗（请检查流程配置）');
+      }
+    }
+
+    // 输入槽位前先展示当前已选流程，供操作员确认目标流程。
+    setInfoPanel(`通道${letter} ${experimentType} 样本入库`, [
+      `实验类型：${experimentType}`,
+      ...workflowInfoLines,
+      '请在下方弹窗输入实际放置的玻片槽位。'
+    ]);
+
+    const slotInput = prompt(`通道 ${letter} ${experimentType}：请输入实际放置玻片槽位\n可输入：1,3 或 ${letter}-01,${letter}-03`, '1');
+    requestedSlides = parseHeSlideSlots(slotInput, letter).map(slotCode => ({ slotCode }));
+    if(!requestedSlides.length) { log(`通道${letter} 未选择任何 ${experimentType} 玻片槽位`, 'warn', channelId); return; }
+
     const duplicatedSlots = requestedSlides.map(x => x.slotCode).filter(x => occupiedSlots.has(x));
     if(duplicatedSlots.length) {
       setInfoPanel(`通道${letter} 样本入库未执行`, [
@@ -3060,23 +3012,21 @@ async function intakeChannelSamples(channelId) {
       log(`通道${letter} 槽位已占用：${duplicatedSlots.join('、')}`, 'warn', channelId);
       return;
     }
-    if(activeResp?.workflowSelectionStatus !== 'Selected') {
-      await writeApi('/api/channel-batches/experiment-type-selection', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-exp-type'), drawerCode: letter, experimentType }) });
-    }
-    const channelBatchId = activeResp?.channelBatchId || null;
-    if(!channelBatchId) { log(`通道${letter} 未获取到活动通道批次`, 'err', channelId); return; }
+
+    setInfoPanel(`通道${letter} 样本入库中`, [
+      `实验类型：${experimentType}`,
+      ...workflowInfoLines,
+      `实际槽位：${requestedSlides.map(x => x.slotCode).join('、')}`,
+      '正在创建任务...'
+    ]);
 
     let createdCount = 0;
     for(const slide of requestedSlides) {
-      let lis = null;
-      if(experimentType === 'IHC') {
-        lis = await writeApi('/api/lis/mock-query', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('lis-query'), rawCode:slide.rawCode }) });
-      }
-      const body = experimentType === 'HE'
-        ? { commandId: makeCommandId('task-he'), slotCode:slide.slotCode, drawerCode:letter, channelBatchId }
-        : { commandId: makeCommandId('task-ihc'), inputMode:'PrimaryAntibody', rawCode:slide.rawCode, slotCode:slide.slotCode, drawerCode:letter, channelBatchId, selectedPrimaryAntibodyCode: lis?.candidatePrimaryAntibodyCodes?.[0] || slide.rawCode, lisQueryLogId: lis?.lisQueryLogId || null };
+      const taskApiPath = experimentType === 'HE' ? 'he' : 'ihc';
+      const commandId = makeCommandId('task-' + taskApiPath);
+      const body = { commandId, slotCode:slide.slotCode, drawerCode:letter, channelBatchId };
       try {
-        await backendApi('/api/tasks/' + (experimentType === 'HE' ? 'he' : 'ihc'), { method:'POST', body: JSON.stringify(body) });
+        await backendApi('/api/tasks/' + taskApiPath, { method:'POST', body: JSON.stringify(body) });
         createdCount++;
         log(`通道${letter} 玻片入库完成：${slide.slotCode} (${experimentType})`, 'ok', channelId);
       } catch(err) {
@@ -3090,6 +3040,12 @@ async function intakeChannelSamples(channelId) {
     if(createdCount) {
       ch.barcodeReady = true;
       log(`通道${letter} 已按实际槽位入库 ${createdCount}/${requestedSlides.length} 张玻片`, createdCount === requestedSlides.length ? 'ok' : 'warn', channelId);
+      setInfoPanel(`通道${letter} 样本入库完成`, [
+        `实验类型：${experimentType}`,
+        ...workflowInfoLines,
+        `实际槽位：${requestedSlides.map(x => x.slotCode).join('、')}`,
+        `入库成功：${createdCount}/${requestedSlides.length} 张玻片`
+      ]);
     } else {
       log(`通道${letter} 未创建任何玻片任务`, 'warn', channelId);
     }

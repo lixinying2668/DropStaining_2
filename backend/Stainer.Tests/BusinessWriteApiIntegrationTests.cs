@@ -561,13 +561,13 @@ public sealed class BusinessWriteApiIntegrationTests
         Assert.NotNull(workflows);
         var he = workflows!.Single(x => x.Code == ReferenceDataSeeder.DefaultHeWorkflowCode);
         var heVersion = he.Versions.Single(x => x.VersionNo == 1);
-        Assert.Equal("测试 HE 流程", he.Name);
+        Assert.Equal("HE 快速染色模板", he.Name);
         Assert.Equal(StainingTaskType.He, he.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, heVersion.Status);
 
         var ihc = workflows.Single(x => x.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode);
         var ihcVersion = ihc.Versions.Single(x => x.VersionNo == 1);
-        Assert.Equal("测试 IHC 001-A", ihc.Name);
+        Assert.Equal("IHC 标准流程 40℃", ihc.Name);
         Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, ihcVersion.Status);
 
@@ -585,11 +585,10 @@ public sealed class BusinessWriteApiIntegrationTests
             workflowVersionId = ihcVersion.Id
         });
 
+        // IHC task: primary antibody comes from the seeded workflow's PRIMARY step (ReagentCode = "P01").
         var task = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-seed-compatible-ihc-001",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = ReferenceDataSeeder.ManualPrimaryAntibodyCode,
             drawerCode = "D",
             slotCode = "D-01"
         });
@@ -599,6 +598,12 @@ public sealed class BusinessWriteApiIntegrationTests
 
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        // Verify the task has the workflow-determined primary antibody (P01), not the legacy mapping code (001).
+        var persisted = await dbContext.StainingTasks.SingleAsync(x => x.Id == task.TaskId);
+        Assert.Equal("P01", persisted.ConfirmedPrimaryAntibodyCode);
+        Assert.Equal("P01", persisted.PrimaryAntibodyCode);
+
+        // Legacy mapping still exists for backward compatibility.
         Assert.True(await dbContext.PrimaryAntibodyWorkflowMappings
             .Include(x => x.WorkflowVersion)
             .ThenInclude(x => x!.WorkflowDefinition)
@@ -623,13 +628,13 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
             var heVersion = await CreatePublishedWorkflowVersionAsync(dbContext, "HE-API", StainingTaskType.He, "HEM", 2000);
-            var ihcVersionOne = await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-API-1", StainingTaskType.Ihc, "ABC", 1000);
-            var ihcVersionTwo = await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-API-2", StainingTaskType.Ihc, "ABC", 1000);
-            var ihcVersionThree = await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-API-3", StainingTaskType.Ihc, "XYZ", 1000);
+            var ihcVersionOne = await CreatePublishedIhcWorkflowVersionAsync(dbContext, "IHC-API-1", "PA1", 1000);
+            var ihcVersionTwo = await CreatePublishedIhcWorkflowVersionAsync(dbContext, "IHC-API-2", "PA1", 1000);
+            _ = await CreatePublishedIhcWorkflowVersionAsync(dbContext, "IHC-API-3", "PA2", 1000);
             dbContext.PrimaryAntibodyWorkflowMappings.AddRange(
                 new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA1", WorkflowVersionId = ihcVersionOne.Id },
                 new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA1", WorkflowVersionId = ihcVersionTwo.Id },
-                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA2", WorkflowVersionId = ihcVersionThree.Id });
+                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA2", WorkflowVersionId = ihcVersionTwo.Id });
             dbContext.HospitalBarcodeMappings.AddRange(
                 new HospitalBarcodeMapping { HospitalCode = "HOSP-MULTI", PrimaryAntibodyCode = "PA1" },
                 new HospitalBarcodeMapping { HospitalCode = "HOSP-MULTI", PrimaryAntibodyCode = "PA2" });
@@ -669,11 +674,10 @@ public sealed class BusinessWriteApiIntegrationTests
         Assert.True(heTask.Ok);
         Assert.False(string.IsNullOrWhiteSpace(heTask.TaskId));
 
+        // IHC task on a HE channel still rejected by experiment type mismatch.
         var multiWorkflow = await client.PostAsJsonAsync("/api/tasks/ihc", new
         {
             commandId = "cmd-ihc-multi-workflow-001",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA1",
             drawerCode = "A",
             slotCode = "A-02"
         });
@@ -681,43 +685,23 @@ public sealed class BusinessWriteApiIntegrationTests
         var multiWorkflowBody = await multiWorkflow.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("channel_experiment_type_mismatch", multiWorkflowBody.GetProperty("code").GetString());
 
-        var lisMissing = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-ihc-lis-missing-001",
-            inputMode = "HospitalBarcode",
-            rawCode = " UNKNOWN\r\n",
-            drawerCode = "A",
-            slotCode = "A-02"
-        });
-        Assert.Equal(HttpStatusCode.NotFound, lisMissing.StatusCode);
-
-        var multiAntibody = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-ihc-multi-antibody-001",
-            inputMode = "HospitalBarcode",
-            rawCode = " HOSP-MULTI\r\n",
-            drawerCode = "A",
-            slotCode = "A-02"
-        });
-        Assert.Equal(HttpStatusCode.Conflict, multiAntibody.StatusCode);
-        var multiAntibodyBody = await multiAntibody.Content.ReadFromJsonAsync<TaskCreationResponse>();
-        Assert.True(multiAntibodyBody!.RequiresSelection);
-        Assert.Equal(2, multiAntibodyBody.CandidatePrimaryAntibodyCodes.Count);
-
+        // IHC task: primary antibody comes from workflow step, not client input.
+        // Client submits inputMode/rawCode (legacy fields, ignored by new logic).
         var ihcTask = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-ihc-task-001",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA1",
             drawerCode = "B",
             slotCode = "B-01"
         });
         Assert.True(ihcTask.Ok);
+        Assert.Equal("Compatible", ihcTask.CompatibilityValidationStatus);
 
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         var persisted = await verifyContext.StainingTasks.SingleAsync(x => x.Id == ihcTask.TaskId);
+        // Primary antibody is determined by workflow PRIMARY step, not client input.
         Assert.Equal("PA1", persisted.PrimaryAntibodyCode);
+        Assert.Equal("PA1", persisted.ConfirmedPrimaryAntibodyCode);
         Assert.Contains(ihcVersionOneId, persisted.WorkflowSnapshotJson);
         var batch = await verifyContext.ChannelBatches.Include(x => x.SlideTasks).SingleAsync(x => x.Id == ihcSelection.ChannelBatchId);
         Assert.Equal(ihcVersionOneId, batch.SelectedWorkflowVersionId);
@@ -733,17 +717,14 @@ public sealed class BusinessWriteApiIntegrationTests
 
         string heVersionId;
         string ihcVersionId;
-        string otherIhcVersionId;
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
             heVersionId = (await CreatePublishedWorkflowVersionAsync(dbContext, "HE-102", StainingTaskType.He, "HEM", 100)).Id;
-            ihcVersionId = (await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-102", StainingTaskType.Ihc, "ABC", 100)).Id;
-            otherIhcVersionId = (await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-102-OTHER", StainingTaskType.Ihc, "XYZ", 100)).Id;
+            ihcVersionId = (await CreatePublishedIhcWorkflowVersionAsync(dbContext, "IHC-102", "PA1", 100)).Id;
             dbContext.PrimaryAntibodyWorkflowMappings.AddRange(
                 new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA1", WorkflowVersionId = ihcVersionId },
-                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA2", WorkflowVersionId = ihcVersionId },
-                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA3", WorkflowVersionId = otherIhcVersionId });
+                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA2", WorkflowVersionId = ihcVersionId });
             await dbContext.SaveChangesAsync();
         }
 
@@ -751,6 +732,7 @@ public sealed class BusinessWriteApiIntegrationTests
         var batchBId = await CreateEmptyChannelBatchAsync(factory, "B");
         var batchCId = await CreateEmptyChannelBatchAsync(factory, "C");
 
+        // Unselected workflow → channel_workflow_required
         var unselected = await client.PostAsJsonAsync("/api/tasks/he", new
         {
             commandId = "cmd-102-unselected-he",
@@ -793,26 +775,22 @@ public sealed class BusinessWriteApiIntegrationTests
         Assert.Equal(StainingTaskType.He, heTask.ExperimentType);
         Assert.Equal(heVersionId, heTask.WorkflowVersionId);
 
+        // IHC task on a HE channel → channel_experiment_type_mismatch
         var ihcOnHeChannel = await client.PostAsJsonAsync("/api/tasks/ihc", new
         {
             commandId = "cmd-102-ihc-on-he",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA1",
             drawerCode = "A",
             slotCode = "A-02"
         });
         Assert.Equal(HttpStatusCode.Conflict, ihcOnHeChannel.StatusCode);
         Assert.Equal("channel_experiment_type_mismatch", (await ihcOnHeChannel.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
+        // IHC task: primary antibody from workflow step. Legacy fields ignored.
         var ihcRequest = new
         {
             commandId = "cmd-102-ihc-pa1",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA1",
             drawerCode = "B",
-            slotCode = "B-01",
-            selectedWorkflowVersionId = ihcVersionId,
-            lisQueryLogId = "lis-102-001"
+            slotCode = "B-01"
         };
         var ihcTask = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", ihcRequest);
         Assert.Equal(ihcSelection.ChannelBatchId, ihcTask.ChannelBatchId);
@@ -820,58 +798,31 @@ public sealed class BusinessWriteApiIntegrationTests
         Assert.Equal(ihcVersionId, ihcTask.WorkflowVersionId);
         Assert.Equal("Compatible", ihcTask.CompatibilityValidationStatus);
 
+        // Idempotent replay
         var replayed = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", ihcRequest);
         Assert.True(replayed.Replayed);
         Assert.Equal(ihcTask.TaskId, replayed.TaskId);
 
+        // Second IHC task on same channel: antibody still from workflow (PA1), not from any client input.
         var ihcTaskTwo = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-102-ihc-pa2",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA2",
             drawerCode = "B",
-            slotCode = "B-02",
-            workflowVersionId = ihcVersionId
+            slotCode = "B-02"
         });
         Assert.Equal(ihcVersionId, ihcTaskTwo.WorkflowVersionId);
 
-        var incompatible = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-102-ihc-incompatible",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA_BAD",
-            drawerCode = "B",
-            slotCode = "B-03"
-        });
-        Assert.Equal(HttpStatusCode.Conflict, incompatible.StatusCode);
-        Assert.Equal("ihc_channel_workflow_incompatible", (await incompatible.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
-
-        var legacyMismatch = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-102-ihc-legacy-mismatch",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA1",
-            drawerCode = "B",
-            slotCode = "B-03",
-            workflowVersionId = otherIhcVersionId
-        });
-        Assert.Equal(HttpStatusCode.Conflict, legacyMismatch.StatusCode);
-        Assert.Equal("channel_workflow_mismatch", (await legacyMismatch.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
-
+        // Concurrent IHC tasks on same slot → slot_not_idle
         var concurrentResponses = await Task.WhenAll(
             client.PostAsJsonAsync("/api/tasks/ihc", new
             {
                 commandId = "cmd-102-concurrent-one",
-                inputMode = "DirectPrimaryAntibody",
-                rawCode = "PA1",
                 drawerCode = "C",
                 slotCode = "C-01"
             }),
             client.PostAsJsonAsync("/api/tasks/ihc", new
             {
                 commandId = "cmd-102-concurrent-two",
-                inputMode = "DirectPrimaryAntibody",
-                rawCode = "PA2",
                 drawerCode = "C",
                 slotCode = "C-01"
             }));
@@ -880,6 +831,7 @@ public sealed class BusinessWriteApiIntegrationTests
         var concurrentConflict = concurrentResponses.Single(x => x.StatusCode == HttpStatusCode.Conflict);
         Assert.Equal("slot_not_idle", (await concurrentConflict.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
+        // Locked batch cannot accept new slides
         await using (var lockScope = factory.Services.CreateAsyncScope())
         {
             var dbContext = lockScope.ServiceProvider.GetRequiredService<StainerDbContext>();
@@ -892,8 +844,6 @@ public sealed class BusinessWriteApiIntegrationTests
         var lockedAdd = await client.PostAsJsonAsync("/api/tasks/ihc", new
         {
             commandId = "cmd-102-locked-add",
-            inputMode = "DirectPrimaryAntibody",
-            rawCode = "PA1",
             drawerCode = "B",
             slotCode = "B-04"
         });
@@ -913,13 +863,11 @@ public sealed class BusinessWriteApiIntegrationTests
             Assert.Equal(ihcVersionId, x.WorkflowVersionId);
             Assert.Equal(batchB.WorkflowSnapshotJson, x.WorkflowSnapshotJson);
             Assert.Equal("Compatible", x.CompatibilityValidationStatus);
+            // Both tasks have the same primary antibody from the workflow step.
+            Assert.Equal("PA1", x.ConfirmedPrimaryAntibodyCode);
         });
-        Assert.Contains(bTasks, x => x.ConfirmedPrimaryAntibodyCode == "PA1" && x.LisQueryLogId == "lis-102-001");
-        Assert.Contains(bTasks, x => x.ConfirmedPrimaryAntibodyCode == "PA2");
         Assert.Equal(1, await verifyContext.StainingTasks.CountAsync(x => x.Id == ihcTask.TaskId));
         Assert.Equal(1, await verifyContext.SlideTasks.CountAsync(x => x.ChannelBatchId == batchCId && x.SlotCode == "C-01"));
-        Assert.False(await verifyContext.SlideTasks.AnyAsync(x => x.ChannelBatchId == batchBId && x.SlotCode == "B-03"));
-        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "task.ihc.compatibility_failed" && x.EntityId == batchBId));
     }
 
     [Fact]
@@ -1700,6 +1648,80 @@ public sealed class BusinessWriteApiIntegrationTests
             reagentCode,
             requiredVolumeUl,
             WorkflowVersionStatus.Published);
+    }
+
+    /// <summary>
+    /// Creates a published IHC workflow version with a PRIMARY_ANTIBODY step whose ReagentCode
+    /// determines the primary antibody for tasks. This is the new IHC workflow-driven antibody model.
+    /// </summary>
+    private static async Task<WorkflowVersion> CreatePublishedIhcWorkflowVersionAsync(
+        StainerDbContext dbContext,
+        string workflowCode,
+        string primaryAntibodyReagentCode,
+        int requiredVolumeUl = 100)
+    {
+        var liquidClassProfileId = await dbContext.LiquidClassProfiles
+            .Where(x => x.EnabledVersionId != null)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var reagentDefinition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == primaryAntibodyReagentCode);
+        if (reagentDefinition is null)
+        {
+            reagentDefinition = new ReagentDefinition
+            {
+                ReagentCode = primaryAntibodyReagentCode,
+                Name = $"Reagent {primaryAntibodyReagentCode}",
+                ReagentType = "test",
+                LiquidClassProfileId = liquidClassProfileId,
+                CreatedAtUtc = DateTimeOffset.UtcNow
+            };
+            dbContext.ReagentDefinitions.Add(reagentDefinition);
+        }
+        else if (reagentDefinition.LiquidClassProfileId is null)
+        {
+            reagentDefinition.LiquidClassProfileId = liquidClassProfileId;
+        }
+
+        var workflowDefinition = new WorkflowDefinition
+        {
+            Code = workflowCode,
+            Name = $"{workflowCode} definition",
+            WorkflowType = StainingTaskType.Ihc,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        var workflowVersion = new WorkflowVersion
+        {
+            WorkflowDefinition = workflowDefinition,
+            VersionNo = 1,
+            VersionLabel = "1.0",
+            Status = WorkflowVersionStatus.Published,
+            ChangeNote = "Published IHC workflow for integration test.",
+            PublishedAtUtc = DateTimeOffset.UtcNow,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        workflowVersion.Steps.Add(new WorkflowStep
+        {
+            StepNo = 1,
+            MajorStepCode = "PRIMARY_ANTIBODY",
+            StepName = "Primary antibody",
+            ActionType = "Dispense",
+            ReagentCode = primaryAntibodyReagentCode,
+            VolumeUl = requiredVolumeUl,
+            DurationSeconds = 60,
+            TargetTemperatureDeciC = 250,
+            FailureStrategy = "Stop",
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        });
+        workflowVersion.ReagentRequirements.Add(new WorkflowReagentRequirement
+        {
+            ReagentCode = primaryAntibodyReagentCode,
+            RequiredVolumeUl = requiredVolumeUl,
+            IsRequired = true,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        });
+        dbContext.WorkflowVersions.Add(workflowVersion);
+        await dbContext.SaveChangesAsync();
+        return workflowVersion;
     }
 
     private static async Task<WorkflowVersion> CreateWorkflowVersionAsync(

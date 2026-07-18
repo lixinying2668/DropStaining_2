@@ -297,7 +297,7 @@ public sealed class DefaultWorkflowSelectionIntegrationTests
     }
 
     [Fact]
-    public async Task Default_ihc_channel_accepts_multiple_mapped_antibodies_and_rejects_unmapped_code()
+    public async Task Default_ihc_channel_uses_workflow_driven_primary_antibody()
     {
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
@@ -328,11 +328,10 @@ public sealed class DefaultWorkflowSelectionIntegrationTests
             reason = (string?)null
         }, HttpStatusCode.OK);
 
+        // Client submits legacy inputMode/rawCode but primary antibody is determined by workflow step.
         await PostAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-ihc-001",
-            inputMode = "PrimaryAntibody",
-            rawCode = "001",
             slotCode = "A-01",
             drawerCode = "A",
             channelBatchId = batch.ChannelBatchId
@@ -340,21 +339,18 @@ public sealed class DefaultWorkflowSelectionIntegrationTests
         await PostAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-ihc-002",
-            inputMode = "PrimaryAntibody",
-            rawCode = "002",
             slotCode = "A-02",
             drawerCode = "A",
             channelBatchId = batch.ChannelBatchId
         }, HttpStatusCode.OK);
-        await AssertStatusAsync(client, "/api/tasks/ihc", new
+        // Previously unmapped codes were rejected; now all succeed since antibody is from workflow.
+        await PostAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
-            commandId = "cmd-ihc-003-unmapped",
-            inputMode = "PrimaryAntibody",
-            rawCode = "003",
+            commandId = "cmd-ihc-003",
             slotCode = "A-03",
             drawerCode = "A",
             channelBatchId = batch.ChannelBatchId
-        }, HttpStatusCode.Conflict);
+        }, HttpStatusCode.OK);
 
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var verifyDb = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
@@ -362,10 +358,14 @@ public sealed class DefaultWorkflowSelectionIntegrationTests
             .Where(x => x.ChannelBatchId == batch.ChannelBatchId)
             .Include(x => x.StainingTask)
             .Select(x => x.StainingTask!)
-            .OrderBy(x => x.ConfirmedPrimaryAntibodyCode)
             .ToListAsync();
-        Assert.Equal(["001", "002"], tasks.Select(x => x.ConfirmedPrimaryAntibodyCode!).ToArray());
-        Assert.All(tasks, x => Assert.Equal(defaultIhcId, x.WorkflowVersionId));
+        Assert.Equal(3, tasks.Count);
+        // All tasks have ConfirmedPrimaryAntibodyCode = "P01" (seeded IHC workflow PRIMARY step ReagentCode).
+        Assert.All(tasks, x =>
+        {
+            Assert.Equal("P01", x.ConfirmedPrimaryAntibodyCode);
+            Assert.Equal(defaultIhcId, x.WorkflowVersionId);
+        });
     }
 
     private static WebApplicationFactory<Program> CreateFactory()

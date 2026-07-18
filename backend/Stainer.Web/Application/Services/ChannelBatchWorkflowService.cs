@@ -13,7 +13,8 @@ public sealed class ChannelBatchWorkflowService(
     CommandIdempotencyService idempotencyService,
     IRuntimeEventPublisher eventPublisher,
     CoordinateProfileLifecycleService coordinateProfileLifecycleService,
-    LiquidClassSnapshotFactory liquidClassSnapshotFactory)
+    LiquidClassSnapshotFactory liquidClassSnapshotFactory,
+    WorkflowPrimaryAntibodyResolver workflowPrimaryAntibodyResolver)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] ActiveBatchStatuses =
@@ -83,7 +84,10 @@ public sealed class ChannelBatchWorkflowService(
                         version.Id,
                         batch.WorkflowSelectionStatus,
                         batch.WorkflowSelectedAtUtc,
-                        "Channel workflow selected."),
+                        "Channel workflow selected.",
+                        version.WorkflowDefinition?.Name,
+                        version.VersionLabel,
+                        workflowPrimaryAntibodyResolver.ResolveCodeOrNull(version)),
                     "ChannelBatch",
                     batch.Id);
             },
@@ -200,7 +204,8 @@ public sealed class ChannelBatchWorkflowService(
                         batch.WorkflowSelectedAtUtc,
                         isInitialSelection ? "Channel experiment type selected." : "Channel experiment type changed.",
                         version.WorkflowDefinition.Name,
-                        version.VersionLabel),
+                        version.VersionLabel,
+                        workflowPrimaryAntibodyResolver.ResolveCodeOrNull(version)),
                     "ChannelBatch",
                     batch.Id);
             },
@@ -228,6 +233,10 @@ public sealed class ChannelBatchWorkflowService(
 
                 var activeBatches = await dbContext.ChannelBatches
                     .Include(x => x.SlideTasks)
+                    .Include(x => x.SelectedWorkflowVersion)
+                    .ThenInclude(x => x!.WorkflowDefinition)
+                    .Include(x => x.SelectedWorkflowVersion)
+                    .ThenInclude(x => x!.Steps)
                     .Where(x => x.DrawerId == drawer.Id && ActiveBatchStatuses.Contains(x.Status))
                     .ToListAsync(cancellationToken);
                 var existing = activeBatches
@@ -259,6 +268,11 @@ public sealed class ChannelBatchWorkflowService(
                     PublishChannelBatchChanged(batch, "batchCreated");
                 }
 
+                var selectedVersion = batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Selected
+                    && !string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+                    ? batch.SelectedWorkflowVersion
+                    : null;
+
                 return new CommandExecutionResult<ChannelBatchActivationResponse>(
                     new ChannelBatchActivationResponse(
                         true,
@@ -273,7 +287,11 @@ public sealed class ChannelBatchWorkflowService(
                         batch.SlideTasks
                             .OrderBy(x => x.SlotCode)
                             .Select(x => x.SlotCode)
-                            .ToList()),
+                            .ToList(),
+                        selectedVersion?.Id,
+                        selectedVersion?.WorkflowDefinition?.Name,
+                        selectedVersion?.VersionLabel,
+                        workflowPrimaryAntibodyResolver.ResolveCodeOrNull(selectedVersion)),
                     "ChannelBatch",
                     batch.Id);
             },

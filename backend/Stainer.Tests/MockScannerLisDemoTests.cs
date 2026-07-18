@@ -196,34 +196,32 @@ public sealed class MockScannerLisDemoTests
         Assert.Equal(LisQueryStatus.SingleCandidate, singleQuery.Status);
         Assert.Equal("HOSP-SINGLE", singleQuery.NormalizedCode);
 
+        // IHC task: primary antibody from workflow step (P01), not from LIS query.
+        // Legacy inputMode/rawCode/lisQueryLogId are accepted but ignored.
         var task = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-lis-single-task",
-            inputMode = "HospitalBarcode",
-            rawCode = "HOSP-SINGLE",
-            lisQueryLogId = singleQuery.LisQueryLogId,
             drawerCode = "A",
             slotCode = "A-01"
         });
         Assert.True(task.Ok);
         Assert.Equal("Compatible", task.CompatibilityValidationStatus);
 
+        // LIS query with no result still works as standalone API.
         var noneQuery = await PostJsonAsync<MockLisQueryResponse>(client, "/api/lis/mock-query", new
         {
             commandId = "cmd-lis-none-query",
             rawCode = "HOSP-NONE"
         });
         Assert.Equal(LisQueryStatus.NoResult, noneQuery.Status);
-        var noneTask = await client.PostAsJsonAsync("/api/tasks/ihc", new
+        // IHC task creation no longer depends on LIS results; succeeds with workflow-driven antibody.
+        var noneTask = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-lis-none-task",
-            inputMode = "HospitalBarcode",
-            rawCode = "HOSP-NONE",
-            lisQueryLogId = noneQuery.LisQueryLogId,
             drawerCode = "A",
             slotCode = "A-02"
         });
-        Assert.Equal(HttpStatusCode.NotFound, noneTask.StatusCode);
+        Assert.True(noneTask.Ok);
 
         var multiQuery = await PostJsonAsync<MockLisQueryResponse>(client, "/api/lis/mock-query", new
         {
@@ -231,48 +229,22 @@ public sealed class MockScannerLisDemoTests
             rawCode = "HOSP-MULTI"
         });
         Assert.Equal(2, multiQuery.CandidatePrimaryAntibodyCodes.Count);
-        var multiNeedsSelection = await client.PostAsJsonAsync("/api/tasks/ihc", new
+        // Multiple LIS candidates no longer trigger RequiresSelection; task succeeds with workflow antibody.
+        var multiTask = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
-            commandId = "cmd-lis-multi-no-selection",
-            inputMode = "HospitalBarcode",
-            rawCode = "HOSP-MULTI",
-            lisQueryLogId = multiQuery.LisQueryLogId,
+            commandId = "cmd-lis-multi-task",
             drawerCode = "A",
-            slotCode = "A-02"
+            slotCode = "A-03"
         });
-        Assert.Equal(HttpStatusCode.Conflict, multiNeedsSelection.StatusCode);
-        var selectionBody = await multiNeedsSelection.Content.ReadFromJsonAsync<TaskCreationResponse>();
-        Assert.True(selectionBody!.RequiresSelection);
+        Assert.True(multiTask.Ok);
 
-        var incompatible = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-lis-multi-incompatible",
-            inputMode = "HospitalBarcode",
-            rawCode = "HOSP-MULTI",
-            lisQueryLogId = multiQuery.LisQueryLogId,
-            selectedPrimaryAntibodyCode = "P02",
-            drawerCode = "A",
-            slotCode = "A-02"
-        });
-        Assert.Equal(HttpStatusCode.Conflict, incompatible.StatusCode);
-        Assert.Equal("ihc_channel_workflow_incompatible", (await incompatible.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
-
+        // LIS timeout query still works as standalone API.
         var timeoutQuery = await PostJsonAsync<MockLisQueryResponse>(client, "/api/lis/mock-query", new
         {
             commandId = "cmd-lis-timeout-query",
             rawCode = "HOSP-TIMEOUT"
         });
         Assert.Equal(LisQueryStatus.TimedOut, timeoutQuery.Status);
-        var timeoutTask = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-lis-timeout-task",
-            inputMode = "HospitalBarcode",
-            rawCode = "HOSP-TIMEOUT",
-            lisQueryLogId = timeoutQuery.LisQueryLogId,
-            drawerCode = "A",
-            slotCode = "A-02"
-        });
-        Assert.Equal(HttpStatusCode.GatewayTimeout, timeoutTask.StatusCode);
 
         var errorQuery = await PostJsonAsync<MockLisQueryResponse>(client, "/api/lis/mock-query", new
         {
@@ -284,13 +256,11 @@ public sealed class MockScannerLisDemoTests
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         var singleLog = await verifyContext.LisQueryLogs.SingleAsync(x => x.Id == singleQuery.LisQueryLogId);
-        Assert.Equal(LisQueryStatus.Selected, singleLog.Status);
-        Assert.Equal("P01", singleLog.SelectedPrimaryAntibodyCode);
-        var failedLog = await verifyContext.LisQueryLogs.SingleAsync(x => x.Id == multiQuery.LisQueryLogId);
-        Assert.Equal(LisQueryStatus.CompatibilityFailed, failedLog.Status);
-        Assert.Equal("P02", failedLog.SelectedPrimaryAntibodyCode);
-        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "lis.selection.compatibility_failed"));
-        Assert.Equal(1, await verifyContext.StainingTasks.CountAsync());
+        Assert.Equal(LisQueryStatus.SingleCandidate, singleLog.Status);
+        // All IHC tasks have ConfirmedPrimaryAntibodyCode = "P01" from workflow step.
+        var allTasks = await verifyContext.StainingTasks.ToListAsync();
+        Assert.Equal(3, allTasks.Count);
+        Assert.All(allTasks, x => Assert.Equal("P01", x.ConfirmedPrimaryAntibodyCode));
     }
 
     [Fact]

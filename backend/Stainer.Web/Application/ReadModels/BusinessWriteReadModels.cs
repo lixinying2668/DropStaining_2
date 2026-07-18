@@ -30,6 +30,10 @@ public sealed record WorkflowDraftMutationResponse(
     string Status,
     string Message);
 
+/// <summary>
+/// 通道批次选择/变更工作流响应。PrimaryAntibodyCode 为所选染色流程由一抗孵育步骤
+/// 解析出的一抗编码；未选或解析失败为 null（仅展示，不抛错）。
+/// </summary>
 public sealed record ChannelBatchWorkflowResponse(
     bool Ok,
     string CommandId,
@@ -42,7 +46,8 @@ public sealed record ChannelBatchWorkflowResponse(
     DateTimeOffset? WorkflowSelectedAtUtc,
     string Message,
     string? WorkflowName = null,
-    string? WorkflowVersionLabel = null);
+    string? WorkflowVersionLabel = null,
+    string? PrimaryAntibodyCode = null);
 
 public sealed record DefaultWorkflowVersionResponse(
     bool Ok,
@@ -56,6 +61,10 @@ public sealed record DefaultWorkflowVersionResponse(
     string WorkflowVersionLabel,
     string Message);
 
+/// <summary>
+/// 通道批次激活/查询响应。SelectedWorkflow* 与 PrimaryAntibodyCode 仅在通道已选流程时回填；
+/// 未选或流程一抗解析失败时为 null（仅展示，不抛错）。
+/// </summary>
 public sealed record ChannelBatchActivationResponse(
     bool Ok,
     string CommandId,
@@ -66,7 +75,11 @@ public sealed record ChannelBatchActivationResponse(
     string WorkflowSelectionStatus,
     string Message,
     string? ExperimentType = null,
-    IReadOnlyList<string>? OccupiedSlotCodes = null);
+    IReadOnlyList<string>? OccupiedSlotCodes = null,
+    string? SelectedWorkflowVersionId = null,
+    string? SelectedWorkflowName = null,
+    string? SelectedWorkflowVersionLabel = null,
+    string? PrimaryAntibodyCode = null);
 
 public sealed record TaskWorkflowCandidateResponse(
     string WorkflowVersionId,

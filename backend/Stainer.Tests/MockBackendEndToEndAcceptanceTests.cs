@@ -37,8 +37,8 @@ public sealed class MockBackendEndToEndAcceptanceTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
-            heVersionId = await PublishedVersionIdAsync(dbContext, "MOCK-HE-DEMO");
-            ihcVersionId = await PublishedVersionIdAsync(dbContext, "MOCK-IHC-P01-DEMO");
+            heVersionId = await PublishedVersionIdAsync(dbContext, "SYSTEM-HE-FAST-V1");
+            ihcVersionId = await PublishedVersionIdAsync(dbContext, "SYSTEM-IHC-STANDARD-40C-V1");
 
             var p01Bottles = await dbContext.ReagentBottles
                 .Where(x => x.ReagentCode == "P01" && x.Status == "Available" && x.ExpirationDate >= DateOnly.FromDateTime(DateTime.UtcNow))
@@ -113,50 +113,24 @@ public sealed class MockBackendEndToEndAcceptanceTests
         var tonglingTask = await PostAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-acceptance-task-tongling",
-            inputMode = "PrimaryAntibody",
-            rawCode = tonglingScan.Items.Single().PrimaryAntibodyCode,
             slotCode = "B-01",
             drawerCode = "B",
-            channelBatchId = ihcBatch.ChannelBatchId,
-            workflowVersionId = ihcVersionId
+            channelBatchId = ihcBatch.ChannelBatchId
         });
         var singleTask = await PostAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-acceptance-task-hospital-single",
-            inputMode = "HospitalBarcode",
-            rawCode = singleLis.NormalizedCode,
-            lisQueryLogId = singleLis.LisQueryLogId,
             slotCode = "B-02",
             drawerCode = "B",
-            channelBatchId = ihcBatch.ChannelBatchId,
-            workflowVersionId = ihcVersionId
+            channelBatchId = ihcBatch.ChannelBatchId
         });
-
-        var selectionRequired = await client.PostAsJsonAsync("/api/tasks/ihc", new
-        {
-            commandId = "cmd-acceptance-task-hospital-multi-required",
-            inputMode = "HospitalBarcode",
-            rawCode = multiLis.NormalizedCode,
-            lisQueryLogId = multiLis.LisQueryLogId,
-            slotCode = "B-03",
-            drawerCode = "B",
-            channelBatchId = ihcBatch.ChannelBatchId,
-            workflowVersionId = ihcVersionId
-        });
-        Assert.Equal(HttpStatusCode.Conflict, selectionRequired.StatusCode);
-        Assert.True((await selectionRequired.Content.ReadFromJsonAsync<TaskCreationResponse>())!.RequiresSelection);
 
         var multiTask = await PostAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
         {
             commandId = "cmd-acceptance-task-hospital-multi-selected",
-            inputMode = "HospitalBarcode",
-            rawCode = multiLis.NormalizedCode,
-            lisQueryLogId = multiLis.LisQueryLogId,
-            selectedPrimaryAntibodyCode = "P01",
             slotCode = "B-03",
             drawerCode = "B",
-            channelBatchId = ihcBatch.ChannelBatchId,
-            workflowVersionId = ihcVersionId
+            channelBatchId = ihcBatch.ChannelBatchId
         });
 
         await ExercisePeripheralMocksAsync(client);

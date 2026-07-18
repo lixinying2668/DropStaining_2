@@ -15,7 +15,8 @@ public sealed class PreflightValidationService(
     FluidicsControlService fluidicsControlService,
     MotionControlService motionControlService,
     DevicePrecheckService devicePrecheckService,
-    DeviceModeService deviceModeService)
+    DeviceModeService deviceModeService,
+    WorkflowPrimaryAntibodyResolver workflowPrimaryAntibodyResolver)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
@@ -71,6 +72,9 @@ public sealed class PreflightValidationService(
             .Include(x => x.ChannelBatch)
             .ThenInclude(x => x!.SelectedWorkflowVersion)
             .ThenInclude(x => x!.WorkflowDefinition)
+            .Include(x => x.ChannelBatch)
+            .ThenInclude(x => x!.SelectedWorkflowVersion)
+            .ThenInclude(x => x!.Steps)
             .Where(x => taskIds.Contains(x.StainingTaskId))
             .ToListAsync(cancellationToken);
         var slideTaskIds = slideTasks.Select(x => x.StainingTaskId).ToHashSet(StringComparer.Ordinal);
@@ -121,30 +125,35 @@ public sealed class PreflightValidationService(
 
             if (batch.ExperimentType == StainingTaskType.Ihc)
             {
-                var antibodyCodes = batchSlides
-                    .Select(x => x.StainingTask?.PrimaryAntibodyCode)
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Cast<string>()
-                    .Distinct()
-                    .ToList();
                 var missingAntibodyCount = batchSlides.Count(x => string.IsNullOrWhiteSpace(x.StainingTask?.PrimaryAntibodyCode));
                 if (missingAntibodyCount > 0)
                 {
                     issues.Add(new PreflightValidationIssueResponse("Workflow", "primary_antibody_required", $"Channel {batch.DrawerCode} has {missingAntibodyCount} IHC slide(s) without primary antibody code."));
                 }
 
-                var compatibleCodes = await dbContext.PrimaryAntibodyWorkflowMappings
-                    .AsNoTracking()
-                    .Where(x => x.IsEnabled
-                        && x.WorkflowVersionId == batch.SelectedWorkflowVersionId
-                        && antibodyCodes.Contains(x.PrimaryAntibodyCode))
-                    .Select(x => x.PrimaryAntibodyCode)
-                    .Distinct()
-                    .ToListAsync(cancellationToken);
-                var incompatible = antibodyCodes.Except(compatibleCodes, StringComparer.OrdinalIgnoreCase).ToList();
-                if (incompatible.Count > 0)
+                // 主检查：任务冻结一抗须与所选染色流程解析出的一抗一致。新任务在创建时二者同源；
+                // 历史脏数据（冻结值与流程解析值不一致）须被预检拦截。
+                // 一抗是否可由本机提供，由“流程试剂需求 + 试剂扫描覆盖”校验（见下文 reagent 段）负责，
+                // 不再依赖 primary_antibody_workflow_mappings 作为启动门禁——映射表仅用于查询/展示。
+                var workflowPrimaryAntibodyCode = workflowPrimaryAntibodyResolver.ResolveCodeOrNull(batch.SelectedWorkflowVersion);
+                if (!string.IsNullOrWhiteSpace(workflowPrimaryAntibodyCode))
                 {
-                    issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_workflow_incompatible", $"Channel {batch.DrawerCode} has incompatible primary antibody code(s): {string.Join(", ", incompatible)}."));
+                    var mismatched = batchSlides
+                        .Where(x => !string.IsNullOrWhiteSpace(x.StainingTask?.PrimaryAntibodyCode)
+                            && !string.Equals(
+                                x.StainingTask!.PrimaryAntibodyCode!.Trim(),
+                                workflowPrimaryAntibodyCode,
+                                StringComparison.OrdinalIgnoreCase))
+                        .Select(x => x.StainingTask?.PrimaryAntibodyCode ?? string.Empty)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    if (mismatched.Count > 0)
+                    {
+                        issues.Add(new PreflightValidationIssueResponse(
+                            "Workflow",
+                            "channel_workflow_incompatible",
+                            $"通道 {batch.DrawerCode} 的染色流程一抗为 {workflowPrimaryAntibodyCode}，但存在冻结值不一致的玻片：{string.Join(", ", mismatched)}。"));
+                    }
                 }
             }
         }

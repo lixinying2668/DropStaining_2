@@ -133,11 +133,27 @@ public sealed record CreateHeTaskRequest(
     string? ChannelBatchId = null,
     string? WorkflowVersionId = null);
 
+/// <summary>
+/// 创建 IHC 任务。一抗由通道所选已发布染色流程的「一抗孵育」步骤决定，
+/// 客户端不再提交一抗；加玻片只需提供槽位与通道信息。
+/// </summary>
+/// <remarks>
+/// 下列字段仅为兼容旧接口保留，不再参与一抗选择或流程匹配：
+/// <list type="bullet">
+/// <item><c>InputMode</c> — 已弃用：一抗由流程决定，本字段忽略其选抗作用。</item>
+/// <item><c>RawCode</c> — 已弃用：一抗由流程决定，本字段忽略其选抗作用。</item>
+/// <item><c>SelectedPrimaryAntibodyCode</c> — 已弃用：一抗由流程决定，本字段忽略其选抗作用。</item>
+/// <item><c>SelectedWorkflowVersionId</c> — 已弃用：一抗由流程决定，本字段忽略其选抗作用。</item>
+/// <item><c>WorkflowVersionId</c> — 已弃用：一抗由流程决定，本字段忽略其选抗作用。</item>
+/// <item><c>LisQueryLogId</c> — 已弃用：一抗由流程决定，本字段忽略其选抗作用。</item>
+/// </list>
+/// 以上字段全部可选；新前端可不发送。后端会以通道已选的已发布 IHC WorkflowVersion 为准。
+/// </remarks>
 public sealed record CreateIhcTaskRequest(
     string CommandId,
-    string InputMode,
-    string RawCode,
-    string SlotCode,
+    string? InputMode = null,
+    string? RawCode = null,
+    string SlotCode = "",
     string? DrawerCode = null,
     string? ChannelBatchId = null,
     string? SelectedPrimaryAntibodyCode = null,
