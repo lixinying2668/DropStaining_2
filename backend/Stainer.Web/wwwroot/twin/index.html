@@ -2204,9 +2204,9 @@
     </div>
     <div class="header-center" id="topCenterControls">
       <div class="mode-switch" id="modeSwitchGroup" role="group" aria-label="运行模式切换">
-        <button class="mode-btn active" id="modeTwinBtn" data-mode="twin">孪生模拟</button>
-        <button class="mode-btn" id="modeDebugBtn" data-mode="debug">调试</button>
-        <button class="mode-btn" id="modeProductionBtn" data-mode="production">生产</button>
+        <button class="mode-btn active" id="modeTwinBtn" data-control-id="modeTwinBtn" data-mode="twin">孪生模拟</button>
+        <button class="mode-btn" id="modeDebugBtn" data-control-id="modeDebugBtn" data-mode="debug">调试</button>
+        <button class="mode-btn" id="modeProductionBtn" data-control-id="modeProductionBtn" data-mode="production">生产</button>
       </div>
       <button class="top-action start pending" id="startBtn" data-run-guard="precheck">开始</button>
       <button class="top-action pause pending" id="pauseBtn" data-run-guard="precheck">暂停</button>
@@ -2215,7 +2215,7 @@
       <span class="pill" id="metricTotalSamples">总计：<b id="totalSampleCount">0</b></span>
       <span class="pill" id="metricTodaySamples">今日：<b id="todaySampleCount">0</b></span>
       <span class="pill" id="metricActiveSamples">当前：<b id="activeSampleCount">0</b></span>
-      <button class="user-btn" id="userBtn">管理员</button>
+      <button class="user-btn" id="userBtn" data-control-id="userBtn">管理员</button>
       <div class="user-menu" id="userMenu" aria-label="用户菜单"></div>
       <span id="legacyTelemetry" style="display:none"><span id="connDot" class="dot"></span><span id="connText">设备在线 / 模拟模式</span><span id="phaseText">待机</span><span id="sampleCount">0</span></span>
     </div>
@@ -2249,7 +2249,7 @@
       <section class="side-card console-card" id="rightConsoleCard">
         <div class="tab-head console-head" id="rightConsoleHeader" role="tablist" aria-label="右侧区域切换">
           <button type="button" class="tab-btn active" id="productionTab" data-side-tab="production" role="tab" aria-selected="true">状态</button>
-          <button type="button" class="tab-btn" id="precheckTab" data-side-tab="precheck" role="tab" aria-selected="false">检测</button>
+          <button type="button" class="tab-btn" id="precheckTab" data-control-id="precheckTab" data-side-tab="precheck" role="tab" aria-selected="false">检测</button>
           <button type="button" class="tab-btn" id="debugTab" data-side-tab="debug" role="tab" aria-selected="false">调试</button>
           <button type="button" class="tab-btn" id="configTab" data-side-tab="config" role="tab" aria-selected="false">配置</button>
           <button type="button" class="tab-btn" id="settingsTab" data-side-tab="settings" role="tab" aria-selected="false">设置</button>
@@ -2266,13 +2266,13 @@
                 <div class="subtab-pane production-subpane active" id="productionStatusSubpane" data-production-pane="status" role="tabpanel" aria-labelledby="productionSubtabStatus">
                   <section class="right-panel-section production-status-panel" id="statusPane">
                     <h3 id="statusPanelTitle">对象详情</h3>
-                    <div class="detail-box" id="detailBox"><strong>未选中对象</strong>点击任意试剂、配液孔、A/B液、玻片、通道按钮、针头、相机或孔位，可查看状态、余量与步骤进度。</div>
+                    <div class="detail-box" id="detailBox" data-control-id="detailBox"><strong>未选中对象</strong>点击任意试剂、配液孔、A/B液、玻片、通道按钮、针头、相机或孔位，可查看状态、余量与步骤进度。</div>
                   </section>
                 </div>
                 <div class="subtab-pane production-subpane" id="productionLogSubpane" data-production-pane="log" role="tabpanel" aria-labelledby="productionSubtabLog">
                   <section class="right-panel-section production-log-panel" id="productionLogPanel">
                     <h3 id="logPanelTitle" class="log-title-row"><span class="log-title-main">日志</span><span class="log-channel-filter-wrap"><select id="logChannelFilterSelect" data-control-id="logChannelFilterSelect" aria-label="按通道筛选日志"><option value="all">全部通道</option><option value="1">通道1</option><option value="2">通道2</option><option value="3">通道3</option><option value="4">通道4</option><option value="none">无通道</option></select></span><span class="log-filter-wrap"><input id="logFilterInput" data-control-id="logFilterInput" type="search" placeholder="搜索日志" aria-label="搜索筛选日志"><button type="button" id="logFilterClearBtn" data-control-id="logFilterClearBtn" class="log-filter-clear" title="清空筛选">×</button></span></h3>
-                    <div class="log-list" id="logList" aria-live="polite"></div>
+                    <div class="log-list" id="logList" data-control-id="logList" aria-live="polite"></div>
                   </section>
                 </div>
                 <div class="subtab-pane production-subpane" id="productionWarnSubpane" data-production-pane="warn" role="tabpanel" aria-labelledby="productionSubtabWarn">
@@ -2284,7 +2284,7 @@
               </div>
             </div>
           </div>
-          <div class="workspace-pane precheck-pane" id="precheckPane" role="region" aria-label="检测状态">
+          <div class="workspace-pane precheck-pane" id="precheckPane" data-control-id="precheckPane" role="region" aria-label="检测状态">
             <div class="precheck-intro"><strong>检测流程</strong><button type="button" id="scanReagentsBtn" data-control-id="scanReagentsBtn">Mock 扫描全部试剂</button><button type="button" id="mockRuntimeResetBtn" data-control-id="mockRuntimeResetBtn">Mock 恢复初始状态</button><button type="button" id="precheckRunAllBtn" data-control-id="precheckRunAllBtn">一键检测所有</button></div>
             <div class="precheck-flow" id="precheckList"></div>
           </div>
@@ -2293,7 +2293,7 @@
           </div>
           <div class="workspace-pane" id="settingsPane" role="region" aria-label="设置">
             <div class="settings-grid" id="settingsGrid">
-              <div class="settings-section" id="settingsSectionMode"><strong>运行模式</strong><div class="settings-line"><span>当前模式</span><b id="settingsModeText">孪生模拟</b></div><div class="settings-line"><span>检测状态</span><b id="settingsPrecheckText">未完成</b></div></div>
+              <div class="settings-section" id="settingsSectionMode"><strong>运行模式</strong><div class="settings-line"><span>当前模式</span><b id="settingsModeText" data-control-id="settingsModeText">孪生模拟</b></div><div class="settings-line"><span>检测状态</span><b id="settingsPrecheckText">未完成</b></div></div>
               <div class="settings-section" id="settingsSectionCommunication"><strong>通讯配置</strong><div class="settings-line"><span>数据接口</span><b id="settingsDataInterfaceText">WebSocket 预留</b></div><div class="settings-line"><span>上位机地址</span><b id="settingsHostAddressText">待配置</b></div></div>
               <div class="settings-section" id="settingsSectionDeviceParameters"><strong>设备参数</strong><div class="settings-line"><span>针头间距</span><b id="settingsNeedleGapText">25 mm</b></div><div class="settings-line"><span>试剂区目标温度</span><b id="settingsReagentTargetTempText">8℃</b></div></div>
             </div>

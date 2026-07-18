@@ -1,3 +1,68 @@
+/**
+ * [OBSOLETE] mock-stage-acceptance.mjs
+ *
+ * This script is obsolete and should NOT be run against the current codebase.
+ * It depends on deleted routes (/samples, /dashboard, /run, /reagents, /admin, /engineer)
+ * and removed browser-global functions (openConfirmModal, confirmTask, machineStateSnapshot,
+ * channelByLetter, openChannelScriptModal, applyChannelExperimentTypeSelection,
+ * openValidationModal).
+ *
+ * Replacement: control-console-acceptance.mjs (migrated to /control-console).
+ *
+ * Obsolete references inventory:
+ *   - Line 68:  goto /samples (404)
+ *   - Line 75:  goto /dashboard (404)
+ *   - Line 99:  goto /reagents (404)
+ *   - Line 104: goto /run (404)
+ *   - Line 357: goto /samples (404)
+ *   - Line 377: goto /engineer (404)
+ *   - Line 394: goto /admin (404)
+ *   - Lines 96,192,255,285,418: window.machineStateSnapshot (removed)
+ *   - Lines 199,203: openChannelScriptModal / channelByLetter (removed)
+ *   - Lines 212,213,224,226,237,239,245: openConfirmModal / confirmTask (removed)
+ *   - Line 106: openValidationModal (removed)
+ *   - Lines 353-364: assertOperatorCannotSeeEngineeringDetails (nav selector a[data-href="/engineer"] removed)
+ *   - Lines 367-383: assertEngineerCanSeeDiagnostics (goto /engineer 404)
+ *   - Lines 386-398: assertAdminCanOpenManagementPage (goto /admin 404)
+ *
+ * Migrated to control-console-acceptance.mjs:
+ *   - Login/logout (TC-01, TC-02)
+ *   - Session expiry detection (TC-03)
+ *   - Mock reagent scan (TC-04)
+ *   - Precheck blocking reasons (TC-05)
+ *   - IHC intake slot-only (TC-06)
+ *   - Workflow info before prompt (TC-07)
+ *   - Mock runtime reset (TC-08)
+ *   - Debug/Production mode gates (TC-09, TC-10)
+ *   - Precheck single module (TC-12)
+ *
+ * NOT migrated (no current business equivalent):
+ *   - WebSocket reconnect instrumentation (lines 303-350): architecture changed to SignalR
+ *   - Legacy endpoint assertions (lines 409-415): those endpoints no longer exist
+ *   - Operator snapshot technical detail filtering (lines 417-419): replaced by /api/twin/snapshot
+ *   - DAB batch creation from snapshot (lines 260-281): now handled by ensureMockDabBatch in index.html
+ *   - Run creation from current tasks (lines 283-301): now handled by startRealRun in index.html
+ *   - Runtime isolation assertion (lines 422-430): test infrastructure concern, not browser acceptance
+ */
+
+// ─── OBSOLETE EXIT GUARD ───────────────────────────────────────────────
+// Hard exit before any module body logic runs. This script references deleted
+// routes (/samples, /dashboard, /run, /reagents, /admin, /engineer) and removed
+// browser globals (machineStateSnapshot, openConfirmModal, ...). We must NOT
+// execute the test body — doing so would 404 against the current backend.
+// Replacement: control-console-acceptance.mjs.
+//
+// The console.log + process.exit(0) below runs immediately after ES module
+// imports resolve, before main() is invoked. Imports are side-effect-free
+// (they only declare bindings), so this is safe.
+console.log('[obsolete] mock-stage-acceptance.mjs is obsolete and is NOT executed.');
+console.log('[obsolete] Replacement: tools/browser-acceptance/control-console-acceptance.mjs');
+console.log('[obsolete] This script references deleted routes (/samples, /dashboard, /run, /reagents, /admin, /engineer).');
+process.exit(0);
+
+// The original script body is preserved below for reference. It is unreachable
+// because of the process.exit(0) above.
+
 import { chromium, request as playwrightRequest } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
