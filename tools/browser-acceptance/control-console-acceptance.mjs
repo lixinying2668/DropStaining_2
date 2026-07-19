@@ -508,6 +508,11 @@ async function testIhcIntakeSlotOnly(context, api) {
   const page = await loginAndEnter(context, 'admin');
   await resetPromptSnapshots(page);
 
+  // Pre-bind the IHC workflow to channel A. The new intake requires an already-bound
+  // published script — it no longer prompts for HE/IHC nor auto-binds a default.
+  const preActive = await postOk(api, '/api/channel-batches/active', { commandId: 'tc06-prebind-active', drawerCode: 'A' });
+  await postOk(api, '/api/channel-batches/workflow-selection', { commandId: 'tc06-prebind-select', channelBatchId: preActive.channelBatchId, drawerCode: 'A', experimentType: 'IHC', workflowVersionId: expected.versionId });
+
   // Track all API requests to assert no /api/lis/mock-query call.
   const apiCalls = [];
   page.on('request', req => {
@@ -523,13 +528,11 @@ async function testIhcIntakeSlotOnly(context, api) {
     throw new Error(`Expected POST /api/tasks/ihc was not observed: ${err.message}`);
   });
 
-  // Dialog handler: 1st=experiment type → 'IHC'; 2nd=slot → '1'; anything else → dismiss.
+  // Dialog handler: a single slot prompt → '1' (no HE/IHC prompt anymore; type is bound).
   let dialogCount = 0;
   const dialogHandler = async dialog => {
     dialogCount++;
     if (dialogCount === 1) {
-      await dialog.accept('IHC');
-    } else if (dialogCount === 2) {
       await dialog.accept('1');
     } else {
       await dialog.dismiss();
@@ -605,50 +608,36 @@ async function testWorkflowInfoVisibleBeforePrompt(context, api) {
   const page = await loginAndEnter(context, 'admin');
   await resetPromptSnapshots(page);
 
-  // Capture the experiment-type-selection response (the authoritative source the UI
-  // uses to populate the info panel). On a fresh channel this call fires between
-  // the two prompts.
-  let selectionResponseBody = null;
-  page.on('response', async resp => {
-    if (resp.url().includes('/api/channel-batches/experiment-type-selection')
-        && resp.request().method() === 'POST'
-        && resp.ok()) {
-      try { selectionResponseBody = await resp.json(); } catch { /* ignore parse error */ }
-    }
-  });
+  // Pre-bind the IHC workflow to channel B. The new intake requires an already-bound
+  // published script (no HE/IHC prompt, no experiment-type-selection auto-bind).
+  const preActive = await postOk(api, '/api/channel-batches/active', { commandId: 'tc07-prebind-active', drawerCode: 'B' });
+  await postOk(api, '/api/channel-batches/workflow-selection', { commandId: 'tc07-prebind-select', channelBatchId: preActive.channelBatchId, drawerCode: 'B', experimentType: 'IHC', workflowVersionId: expected.versionId });
 
-  // Dialog handler: 1st prompt → 'IHC'; 2nd prompt → dismiss (no task created).
+  // Dialog handler: a single slot prompt → dismiss (we only verify pre-prompt info).
   let dialogCount = 0;
   const dialogHandler = async dialog => {
     dialogCount++;
-    if (dialogCount === 1) {
-      await dialog.accept('IHC');
-    } else if (dialogCount === 2) {
-      // Dismiss the slot prompt — we're only verifying pre-prompt state.
-      await dialog.dismiss();
-    } else {
-      await dialog.dismiss();
-    }
+    await dialog.dismiss();
   };
   page.on('dialog', dialogHandler);
 
   // Trigger intake on channel 2 (letter B) — fresh in isolated DB, distinct from TC-06's A.
   const evaluateDone = page.evaluate(() => intakeChannelSamples(2));
 
-  // Wait deterministically for the 2nd prompt to have fired (snapshot count >= 2).
-  // No fixed delay — this is a real condition the page reaches only after the
-  // info panel has been populated and the slot prompt has been requested.
+  // Wait deterministically for the (single) slot prompt to have fired (snapshot count >= 1).
+  // No fixed delay — the snapshot is captured right before the slot prompt, after the
+  // info panel has been populated with the bound workflow's details.
   await page.waitForFunction(
-    () => (window.__ccPromptSnapshots || []).length >= 2,
+    () => (window.__ccPromptSnapshots || []).length >= 1,
     null,
     { timeout: 20000 }
   );
 
   const snapshots = await readPromptSnapshots(page);
-  assert(snapshots.length >= 2,
-    `Expected at least 2 prompt snapshots (experiment type + slot); got ${snapshots.length}.`);
+  assert(snapshots.length >= 1,
+    `Expected at least 1 prompt snapshot (slot); got ${snapshots.length}.`);
 
-  const slotPromptSnapshot = snapshots[1];
+  const slotPromptSnapshot = snapshots[0];
   console.log(`  Captured pre-slot-prompt detailBox (${slotPromptSnapshot.message.substring(0, 60).replace(/\n/g, ' ')}…):\n    ${slotPromptSnapshot.detail.substring(0, 300).replace(/\n/g, ' ')}`);
 
   // Required assertions on the captured info panel content.
@@ -661,14 +650,8 @@ async function testWorkflowInfoVisibleBeforePrompt(context, api) {
   assert(slotPromptSnapshot.detail.includes(`流程一抗编码：${expected.primaryAntibodyCode}`),
     `Info panel should contain '流程一抗编码：${expected.primaryAntibodyCode}'. Got: "${slotPromptSnapshot.detail.substring(0, 300)}"`);
 
-  // Cross-check: if the selection API response was captured, its primaryAntibodyCode
-  // must agree with the workflow-derived expected value.
-  if (selectionResponseBody) {
-    const sel = selectionResponseBody.primaryAntibodyCode;
-    assert(typeof sel === 'string' && sel.trim() === expected.primaryAntibodyCode,
-      `/api/channel-batches/experiment-type-selection returned primaryAntibodyCode='${sel}' ` +
-        `which disagrees with workflow PRIMARY reagentCode='${expected.primaryAntibodyCode}'.`);
-  }
+  // (No experiment-type-selection cross-check: the new intake never calls it — the
+  // antibody comes from the pre-bound workflow, surfaced via /api/channel-batches/active.)
 
   // Wait for the dismissed intake to settle (deterministic).
   await page.waitForFunction(() => {

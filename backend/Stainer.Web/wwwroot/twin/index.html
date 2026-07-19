@@ -2945,36 +2945,35 @@ async function intakeChannelSamples(channelId) {
   const ch = channels[channelId - 1];
   if(!ch) return;
   if(channelScanningBusy) { log(`通道${letter} 正在处理入库，请稍后再试`, 'warn', channelId); return; }
-  const experimentType = String(prompt(`通道 ${letter} 样本入库\n实验类型（HE / IHC）：`, 'HE') || '').trim().toUpperCase();
-  if(!['HE','IHC'].includes(experimentType)) { log(`通道${letter} 样本入库已取消`, 'warn', channelId); return; }
 
   let requestedSlides = [];
+  let experimentType = '';
   channelScanningBusy = true;
   try {
     // 先读取通道批次与已选染色流程，让操作员在输入槽位前确认正在向哪个流程添加玻片。
-    setInfoPanel(`通道${letter} 样本入库准备中`, [`实验类型：${experimentType}`, '正在读取通道批次与已选染色流程...']);
+    // 入库前先读取活动通道批次及其已绑定脚本；实验类型由通道批次决定，不再由操作员输入，
+    // 也不再隐式绑定系统默认脚本——脚本必须在“通道状态 → 对象详情”中选择并“应用到通道”。
+    setInfoPanel(`通道${letter} 样本入库准备中`, ['正在读取通道批次与已绑定染色流程...']);
     const activeResp = await writeApi('/api/channel-batches/active', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-active'), drawerCode: letter }) });
-    const batchExperimentType = String(activeResp?.experimentType || '').toUpperCase();
-    if(batchExperimentType && batchExperimentType !== experimentType) {
-      setInfoPanel(`通道${letter} 样本入库未执行`, [
-        `当前通道批次类型：${batchExperimentType}`,
-        `本次选择类型：${experimentType}`,
-        '同一通道批次内不能混合 HE 和 IHC。请换空通道，或先完成/清理当前通道批次。'
+    const channelBatchId = activeResp?.channelBatchId || null;
+    const workflowSelectionStatus = String(activeResp?.workflowSelectionStatus || '');
+    const selectedWorkflowVersionId = activeResp?.selectedWorkflowVersionId || activeResp?.workflowVersionId || null;
+    experimentType = String(activeResp?.experimentType || '').toUpperCase();
+
+    // 门禁：必须已绑定已发布脚本（Selected + workflowVersionId + HE/IHC）；否则引导到通道详情选择脚本。
+    // 不创建任务、不调用 experiment-type-selection、不自动绑定系统默认脚本。
+    if(workflowSelectionStatus !== 'Selected' || !selectedWorkflowVersionId || !['HE','IHC'].includes(experimentType)) {
+      setInfoPanel(`通道${letter} 尚未选择已发布脚本`, [
+        `通道 ${letter} 尚未选择已发布脚本。`,
+        `请单击通道，进入“状态 → 对象详情”，选择已发布脚本后点击“应用到通道”，再进行样本入库。`
       ]);
-      log(`通道${letter} 已是 ${batchExperimentType} 批次，不能再加入 ${experimentType} 玻片`, 'warn', channelId);
+      log(`通道${letter} 未绑定已发布脚本，已引导至通道详情`, 'warn', channelId);
+      showChannelDetail(channelId);
       return;
     }
-    const occupiedSlots = new Set((activeResp?.occupiedSlotCodes || []).map(x => String(x || '').toUpperCase()));
-    if(activeResp?.workflowSelectionStatus !== 'Selected') {
-      const selectionResp = await writeApi('/api/channel-batches/experiment-type-selection', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-exp-type'), drawerCode: letter, experimentType }) });
-      if(selectionResp) {
-        if(!activeResp.selectedWorkflowName) activeResp.selectedWorkflowName = selectionResp.workflowName || null;
-        if(!activeResp.selectedWorkflowVersionLabel) activeResp.selectedWorkflowVersionLabel = selectionResp.workflowVersionLabel || null;
-        if(!activeResp.primaryAntibodyCode) activeResp.primaryAntibodyCode = selectionResp.primaryAntibodyCode || null;
-      }
-    }
-    const channelBatchId = activeResp?.channelBatchId || null;
     if(!channelBatchId) { log(`通道${letter} 未获取到活动通道批次`, 'err', channelId); return; }
+
+    const occupiedSlots = new Set((activeResp?.occupiedSlotCodes || []).map(x => String(x || '').toUpperCase()));
 
     // 汇总当前已选流程信息（HE/IHC 均显示流程名/版本；IHC 额外显示流程解析出的一抗）。
     const workflowInfoLines = [];
@@ -2998,7 +2997,8 @@ async function intakeChannelSamples(channelId) {
       '请在下方弹窗输入实际放置的玻片槽位。'
     ]);
 
-    const slotInput = prompt(`通道 ${letter} ${experimentType}：请输入实际放置玻片槽位\n可输入：1,3 或 ${letter}-01,${letter}-03`, '1');
+    const scriptLabel = [activeResp?.selectedWorkflowName, activeResp?.selectedWorkflowVersionLabel].filter(Boolean).join(' ') || '已绑定脚本';
+    const slotInput = prompt(`通道 ${letter} · ${experimentType} · ${scriptLabel}：请输入实际放置玻片槽位\n可输入：1,3 或 ${letter}-01,${letter}-03`, '1');
     requestedSlides = parseHeSlideSlots(slotInput, letter).map(slotCode => ({ slotCode }));
     if(!requestedSlides.length) { log(`通道${letter} 未选择任何 ${experimentType} 玻片槽位`, 'warn', channelId); return; }
 
@@ -5315,11 +5315,17 @@ function renderChannelBindingEditor(channelId, context='status') {
 function refreshChannelBindingEditors(channelId=null) {
   const ids = channelId ? [Number(channelId)] : [1,2,3,4];
   ids.forEach(id => {
-    const value = channelConfigAssignments[id] || '';
-    document.querySelectorAll(`[data-channel-bind-select="${id}"]`).forEach(sel => { sel.value = value; });
+    // 以最新 configProfiles 重新生成 option（仅 Published 脚本），并保留已绑定通道的选中值，
+    // 使发布新脚本后已打开的通道详情下拉框即时同步。仅替换 select 的 option 内容，
+    // 不重新绑定 change/click，既有事件监听继续生效。
+    const selectedProfileId = channelConfigAssignments[id] || channels[id-1]?.configProfileId || '';
+    document.querySelectorAll(`[data-channel-bind-select="${id}"]`).forEach(sel => {
+      sel.innerHTML = profileOptions(selectedProfileId, true, true);
+      sel.value = selectedProfileId;
+    });
     document.querySelectorAll(`[data-channel-profile-preview="${id}"]`).forEach(wrap => {
       const previewId = wrap.getAttribute('data-preview-id') || `channel${id}ProfilePreview`;
-      wrap.innerHTML = renderProfileMini(getProfileById(value), previewId);
+      wrap.innerHTML = renderProfileMini(getProfileById(selectedProfileId), previewId);
     });
   });
 }
@@ -6816,6 +6822,9 @@ async function publishSelectedProfile() {
     try { await ensurePrimaryMappingsForProfile(publishedProfile); }
     catch(err) { log(`脚本已发布，但一抗映射创建失败：${err.message}`, 'warn'); }
     await refreshWorkflowEditor(profile.id, 'files', selectedConfigStepIndex);
+    // refreshWorkflowEditor 已从后端重新加载最新 configProfiles；随后刷新所有已打开的通道详情下拉框，
+    // 使新发布脚本立即出现在“选择已发布脚本”中。（发布失败/校验失败会提前 return，不会走到这里。）
+    refreshChannelBindingEditors();
     log(`脚本已发布，可供通道选择：${profile.name}`, 'ok');
   } catch(err) { /* routed by writeApi */ }
 }
