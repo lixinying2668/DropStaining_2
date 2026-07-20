@@ -652,7 +652,7 @@ public sealed class IhcWorkflowDrivenAntibodyTests
         string status = WorkflowVersionStatus.Published)
     {
         var liquidClassProfileId = await db.LiquidClassProfiles
-            .Where(x => x.EnabledVersionId != null)
+            .Where(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null)
             .Select(x => x.Id)
             .SingleAsync();
 
@@ -728,7 +728,7 @@ public sealed class IhcWorkflowDrivenAntibodyTests
         string status = WorkflowVersionStatus.Published)
     {
         var liquidClassProfileId = await db.LiquidClassProfiles
-            .Where(x => x.EnabledVersionId != null)
+            .Where(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null)
             .Select(x => x.Id)
             .SingleAsync();
         var reagentDef = await db.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == reagentCode);

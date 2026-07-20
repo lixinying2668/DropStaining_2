@@ -440,7 +440,7 @@ public sealed class FluidicsControlMockTests
     {
         var defaultLiquidClass = await dbContext.LiquidClassProfiles
             .Include(x => x.EnabledVersion)
-            .SingleAsync(x => x.EnabledVersionId != null);
+            .SingleAsync(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null);
         var definition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == "ABC");
         if (definition is null)
         {

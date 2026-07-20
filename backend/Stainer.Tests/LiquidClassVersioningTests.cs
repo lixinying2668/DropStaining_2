@@ -23,7 +23,7 @@ public sealed class LiquidClassVersioningTests
         await LoginAsync(client);
 
         var profiles = await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes");
-        var baseline = Assert.Single(profiles!, x => x.EnabledVersionId is not null);
+        var baseline = Assert.Single(profiles!, x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId is not null);
 
         var request = new
         {
@@ -94,7 +94,7 @@ public sealed class LiquidClassVersioningTests
         using var client = factory.CreateClient();
         await LoginAsync(client);
 
-        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.EnabledVersionId is not null);
+        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId is not null);
         var firstBatch = await CreateAndSelectBatchAsync(client, "A", "liquid-freeze-a");
 
         var draft = await PostAsync<LiquidClassVersionMutationResponse>(client, "/api/engineering/liquid-classes", new
@@ -151,7 +151,7 @@ public sealed class LiquidClassVersioningTests
         using var client = factory.CreateClient();
         await LoginAsync(client);
 
-        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.EnabledVersionId is not null);
+        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId is not null);
         var draftA = await CreatePublishedDraftAsync(client, baseline, "concurrent-a", 151);
         var draftB = await CreatePublishedDraftAsync(client, baseline, "concurrent-b", 161);
 

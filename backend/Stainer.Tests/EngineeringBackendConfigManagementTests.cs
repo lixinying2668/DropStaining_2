@@ -140,7 +140,7 @@ public sealed class EngineeringBackendConfigManagementTests
         await LoginAsync(client, "admin", "admin");
         await OpenEngineeringSessionAsync(client, "config-import");
 
-        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.EnabledVersionId is not null);
+        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId is not null);
         var preview = await PostAsync<EngineeringConfigImportPreviewResponse>(client, "/api/engineering/config/import/preview", new
         {
             configType = "liquid-class",
@@ -228,7 +228,7 @@ public sealed class EngineeringBackendConfigManagementTests
 
         var coordinateProfiles = await client.GetFromJsonAsync<List<CoordinateProfileResponse>>("/api/engineering/coordinate-profiles");
         var coordinateVersionId = Assert.Single(coordinateProfiles!, x => x.Code == ReferenceDataSeeder.DefaultCoordinateProfileCode).ActiveVersionId!;
-        var liquidClass = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.EnabledVersionId is not null);
+        var liquidClass = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId is not null);
 
         _ = await PostAsync<ChannelBatchActivationResponse>(client, "/api/channel-batches/active", new
         {

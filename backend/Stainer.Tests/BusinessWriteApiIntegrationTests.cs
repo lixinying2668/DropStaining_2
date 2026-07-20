@@ -328,7 +328,7 @@ public sealed class BusinessWriteApiIntegrationTests
         });
         Assert.True(replayedPublish.Replayed);
 
-        var publishedEdit = await adminClient.PostAsJsonAsync($"/api/workflow-versions/{created.WorkflowVersionId}/steps", new
+        var publishedEdit = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/steps", new
         {
             commandId = "cmd-workflow-config-step-after-publish",
             stepNo = 3,
@@ -337,8 +337,9 @@ public sealed class BusinessWriteApiIntegrationTests
             actionType = "Wash",
             reagentCode = "WAS"
         });
-        Assert.Equal(HttpStatusCode.Conflict, publishedEdit.StatusCode);
-        Assert.Equal("workflow_version_not_draft", (await publishedEdit.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+        Assert.True(publishedEdit.Ok);
+        detail = await adminClient.GetFromJsonAsync<WorkflowVersionMaintenanceResponse>($"/api/workflow-versions/{created.WorkflowVersionId}");
+        Assert.Contains(detail!.Steps, x => x.StepNo == 3 && x.StepName == "Late wash");
 
         var retired = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/retire", new
         {
@@ -1661,7 +1662,7 @@ public sealed class BusinessWriteApiIntegrationTests
         int requiredVolumeUl = 100)
     {
         var liquidClassProfileId = await dbContext.LiquidClassProfiles
-            .Where(x => x.EnabledVersionId != null)
+            .Where(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null)
             .Select(x => x.Id)
             .SingleAsync();
         var reagentDefinition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == primaryAntibodyReagentCode);
@@ -1733,7 +1734,7 @@ public sealed class BusinessWriteApiIntegrationTests
         string status)
     {
         var liquidClassProfileId = await dbContext.LiquidClassProfiles
-            .Where(x => x.EnabledVersionId != null)
+            .Where(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null)
             .Select(x => x.Id)
             .SingleAsync();
         var reagentDefinition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == reagentCode);

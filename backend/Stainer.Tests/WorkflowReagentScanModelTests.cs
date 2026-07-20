@@ -39,14 +39,19 @@ public sealed class WorkflowReagentScanModelTests
     }
 
     [Fact]
-    public async Task Published_workflow_version_cannot_be_modified_in_place()
+    public async Task Published_workflow_version_can_be_modified_in_place()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var version = await CreatePublishedWorkflowVersionAsync(dbContext, "WF-LOCKED", 1);
 
-        version.ChangeNote = "attempted direct edit";
+        version.ChangeNote = "approved direct edit";
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => dbContext.SaveChangesAsync());
+        await dbContext.SaveChangesAsync();
+        dbContext.ChangeTracker.Clear();
+
+        var persisted = await dbContext.WorkflowVersions.SingleAsync(x => x.Id == version.Id);
+        Assert.Equal(WorkflowVersionStatus.Published, persisted.Status);
+        Assert.Equal("approved direct edit", persisted.ChangeNote);
     }
 
     [Fact]

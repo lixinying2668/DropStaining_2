@@ -2,7 +2,7 @@
 
 本仓库当前正式主线是 `backend/Stainer.Web`：ASP.NET Core + SQLite。正式 Web UI 已收敛为唯一的 `/control-console`（`wwwroot/twin/index.html`，自包含）；早期 FastAPI/Jinja 原型和重复静态资源已删除。
 
-当前 HEAD 为 `97d8539`（2026-07-20 文档基线）。Mock 业务能力和真实设备只读软件边界已形成基础，但项目尚未完成发布验收：最近一次完整后端回归为 **313 项中 252 通过、61 失败、0 跳过**，最新单页浏览器回归待重跑。SOCON Bridge 当前 HEAD 的 Release|x86 构建为 **0 warning / 0 error**，离线 `--self-test` 为 **93 checks passed**；该结果没有连接 SDK 或真实硬件。
+当前提交基线为 `012a698`，本轮测试修订尚未提交。Mock 业务能力和真实设备只读软件边界已形成基础，但项目尚未完成发布验收：2026-07-21 对当前工作树执行完整后端回归，结果为 **313 项全部通过、0 失败、0 跳过**；最新单页浏览器回归仍待重跑。SOCON Bridge 最近一次 Release|x86 构建为 **0 warning / 0 error**，离线 `--self-test` 为 **93 checks passed**；该结果没有连接 SDK 或真实硬件。
 
 ## 当前阶段边界
 
@@ -49,7 +49,7 @@ bridges\Stainer.SoconBridge\bin\x86\Release\Stainer.SoconBridge.exe --self-test
 git diff --check
 ```
 
-当前完整后端回归存在 61 项失败，运行测试命令不应被解读为预期全绿。修复后须更新实际通过、失败和跳过数量。
+2026-07-21 当前工作树的完整后端回归为 313/313 通过；后续代码或测试变化后仍须重新记录实际通过、失败和跳过数量。
 
 浏览器验收脚本会启动临时后端实例，使用独立临时 SQLite、执行器锁、日志和备份目录；脚本结束后默认清理临时目录，不应写入 `data/stainer.db`、正式备份或正式运行日志。
 

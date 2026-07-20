@@ -352,7 +352,7 @@ public sealed class MockRuntimeResetIntegrationTests : IAsyncLifetime
             {
                 // Use a simple HE workflow
                 var liquidClassProfileId = await sdb.LiquidClassProfiles
-                    .Where(x => x.EnabledVersionId != null)
+                    .Where(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null)
                     .Select(x => x.Id)
                     .SingleAsync();
                 var reagentDef = await sdb.ReagentDefinitions.FirstOrDefaultAsync(x => x.ReagentCode == "HEM");
@@ -755,7 +755,7 @@ public sealed class MockRuntimeResetIntegrationTests : IAsyncLifetime
         var b01Slot = await db.PhysicalSlots.SingleAsync(x => x.Code == "B-01");
         var drawerA = await db.Drawers.SingleAsync(x => x.Code == "A");
         var liquidClassProfileId = await db.LiquidClassProfiles
-            .Where(x => x.EnabledVersionId != null)
+            .Where(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null)
             .Select(x => x.Id)
             .SingleAsync();
 

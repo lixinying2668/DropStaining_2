@@ -867,7 +867,7 @@ public sealed class RuntimeLedgerExecutorTests
     {
         var defaultLiquidClass = await dbContext.LiquidClassProfiles
             .Include(x => x.EnabledVersion)
-            .SingleAsync(x => x.EnabledVersionId != null);
+            .SingleAsync(x => x.Code == "FactoryGeneral-v1" && x.EnabledVersionId != null);
         foreach (var requirement in requirements)
         {
             if (!await dbContext.ReagentDefinitions.AnyAsync(x => x.ReagentCode == requirement.ReagentCode))
