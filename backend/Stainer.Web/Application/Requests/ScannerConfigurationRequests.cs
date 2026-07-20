@@ -22,6 +22,17 @@ public sealed record SaveScannerProfileRequest(
     ScannerDeviceParametersRequest? DeviceParameters,
     string Reason);
 
+// 扫描触发控制：single=单次扫描 RDCMXEV1,P11,P20；continuous=连续扫描 RDCMXEV1,P11,P21；stop=停止 RDCMXEV1,P10
+public sealed record ScannerTriggerRequest(
+    string CommandId,
+    string Mode,
+    string Reason);
+
+// 读取条码：触发一次单次扫描(RDCMXEV1,P11,P20)，返回 DCR55 回传的条码文本（在 ScannerControlResponse.Steps[0].ResponseText）
+public sealed record ScannerBarcodeRequest(
+    string CommandId,
+    string Reason);
+
 public sealed record SaveScannerRegionRequest(
     string CommandId,
     int RegionNo,

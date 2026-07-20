@@ -197,6 +197,8 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             ScannerConfigurationMutationResponse x => x with { Replayed = true } as T ?? response,
             SerialConnectionMutationResponse x => x with { Replayed = true } as T ?? response,
             PrecisionCalibrationMutationResponse x => x with { Replayed = true } as T ?? response,
+            MixerParameterMutationResponse x => x with { Replayed = true } as T ?? response,
+            WashValveConfigMutationResponse x => x with { Replayed = true } as T ?? response,
             ScannerControlResponse x => x with { Replayed = true } as T ?? response,
             ReagentCoordinateGenerationResultResponse x => x with { Replayed = true } as T ?? response,
             MachineRunResponse x => x with { Replayed = true } as T ?? response,

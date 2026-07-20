@@ -4094,7 +4094,8 @@ async function resolveScannerId(role) {
   try { list = await backendApi('/api/scanners'); } catch(e) { list = []; }
   if(!Array.isArray(list) || !list.length) return null;
   const wantReagent = role === 'reagent';
-  return list.find(s => wantReagent ? /试剂/i.test(String(s.name || '')) : /样本/i.test(String(s.name || ''))) || null;
+  const byRole = list.find(s => wantReagent ? /试剂/i.test(String(s.name || '')) : /样本/i.test(String(s.name || '')));
+  return byRole || list[0]; // 指定类型(样本/试剂)没有时回退到第一个可用扫码器，避免"没有已配置的扫码器"误报
 }
 
 async function createScannerProfile() {
@@ -4123,17 +4124,90 @@ async function scannerControl(action) {
   const sc = await resolveScannerId(role);
   if(!sc) { log('没有已配置的扫码器，请先「创建扫码器」', 'warn'); return; }
   const id = encodeURIComponent(sc.id);
+  if(action === '配置/扫码器：读取条码') {
+    const res = await writeApi(`/api/scanners/${id}/barcode/read`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-barcode'), reason: 'twin 读取条码' }) });
+    const barcode = String((res?.steps?.[0]?.responseText) || '').trim();
+    const el = document.getElementById('scannerBarcodeReadInput');
+    if(el) el.value = barcode;
+    log(`读取条码：${barcode || '(空——Mock 无真实扫码返回)'}`, barcode ? 'ok' : 'warn');
+    await loadDatabaseSnapshot();
+    return;
+  }
   if(action === '配置/扫码器：设置ROI') {
     const roi = k => { const v = Number(document.getElementById('scannerRoi' + k + 'Input')?.value); return Number.isFinite(v) ? v : 0; };
-    await writeApi(`/api/scanners/${id}/roi/apply`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-roi'), left: roi('Left'), top: roi('Top'), width: roi('Width'), height: roi('Height'), reason: 'twin 设置ROI' }) });
+    const L = roi('Left'), T = roi('Top'), W = roi('Width'), H = roi('Height');
+    if(L < 0 || T < 0 || W <= 0 || H <= 0) { log('请先填写完整 ROI（左/上≥0，宽/高>0）', 'warn'); return; }
+    // 1) 应用到硬件（DCR55 CDOPSR* 指令）
+    await writeApi(`/api/scanners/${id}/roi/apply`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-roi'), left: L, top: T, width: W, height: H, reason: 'twin 设置ROI' }) });
+    // 2) 持久化到 profile 配置（GET 全量 → 改 deviceParameters.roi → PUT），否则切换页面后 ROI 会丢
+    try {
+      const cur = await backendApi(`/api/scanners/${id}`);
+      const dp = Object.assign({}, cur.deviceParameters || {}, { roiX: L, roiY: T, roiWidth: W, roiHeight: H });
+      await writeApi(`/api/scanners/${id}`, { method:'PUT', body: JSON.stringify({
+        commandId: makeCommandId('scanner-roi-save'), name: cur.name, scannerType: cur.scannerType, enabled: cur.enabled !== false,
+        port: cur.port, baudRate: cur.baudRate, timeoutMilliseconds: cur.timeoutMilliseconds ?? 2000, triggerMode: cur.triggerMode || 'Software',
+        deviceParameters: dp, reason: 'twin 设置ROI(保存)'
+      }) });
+    } catch(e) { /* routed by writeApi */ }
   } else if(action === '配置/扫码器：打开校验光') {
     await writeApi(`/api/scanners/${id}/calibration-light/enable`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-light-on'), reason: 'twin 打开校验光' }) });
   } else if(action === '配置/扫码器：关闭校验光') {
     await writeApi(`/api/scanners/${id}/calibration-light/disable`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-light-off'), reason: 'twin 关闭校验光' }) });
   } else if(action === '配置/扫码器：重新启动') {
     await writeApi(`/api/scanners/${id}/restart`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-restart'), reason: 'twin 重启扫码器' }) });
+  } else if(action === '配置/扫码器：激活单次触发') {
+    await writeApi(`/api/scanners/${id}/trigger`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-trigger-single'), mode: 'single', reason: 'twin 激活单次触发' }) });
+  } else if(action === '配置/扫码器：激活连续触发') {
+    await writeApi(`/api/scanners/${id}/trigger`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-trigger-continuous'), mode: 'continuous', reason: 'twin 激活连续触发' }) });
+  } else if(action === '配置/扫码器：停止单次触发' || action === '配置/扫码器：停止连续触发') {
+    await writeApi(`/api/scanners/${id}/trigger`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-trigger-stop'), mode: 'stop', reason: 'twin 停止触发' }) });
   }
   log(`${action} -> 扫码器 ${sc.name || sc.id} 已下发`, 'ok');
+  await loadDatabaseSnapshot();
+}
+
+// 把已保存的扫码器配置（COM + ROI）静默回填到输入框。切换子页回来时由 bindConfigHandlers 自动调用，避免值"丢失"。
+async function loadScannerConfigIntoInputs() {
+  const role = String(document.getElementById('scannerTargetSelect')?.value || 'reagent');
+  const sc = await resolveScannerId(role);
+  if(!sc) return null;
+  let p;
+  try { p = await backendApi(`/api/scanners/${encodeURIComponent(sc.id)}`); } catch(e) { return null; }
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = String(v); };
+  setVal('scannerComPortSelect', p.port);
+  setVal('scannerBaudRateSelect', p.baudRate);
+  const preset = document.getElementById('scannerSerialPresetInput');
+  if(preset) preset.value = '8 bits / 1 bits / 无'; // 帧格式后端未单独存储，按默认 8N1 显示
+  const dp = p.deviceParameters || {};
+  setVal('scannerRoiLeftInput', dp.roiX);
+  setVal('scannerRoiTopInput', dp.roiY);
+  setVal('scannerRoiWidthInput', dp.roiWidth);
+  setVal('scannerRoiHeightInput', dp.roiHeight);
+  return p;
+}
+
+// 扫码器 COM 口：读取 = 回显 port/baud（顺带 ROI）；设置 = GET 全量 profile 后改 port/baud 再 PUT（后端要求全量）。
+async function readScannerComConfig() {
+  const role = String(document.getElementById('scannerTargetSelect')?.value || 'reagent');
+  const sc = await resolveScannerId(role);
+  if(!sc) { log('没有已配置的扫码器，请先「创建扫码器」', 'warn'); return; }
+  const p = await loadScannerConfigIntoInputs();
+  if(p) log(`已读取扫码器 COM：${p.port || '未配置'} @ ${p.baudRate || 115200}`, 'ok');
+}
+
+async function setScannerComConfig() {
+  const role = String(document.getElementById('scannerTargetSelect')?.value || 'reagent');
+  const sc = await resolveScannerId(role);
+  if(!sc) { log('没有已配置的扫码器，请先「创建扫码器」', 'warn'); return; }
+  const p = await backendApi(`/api/scanners/${encodeURIComponent(sc.id)}`);
+  const port = document.getElementById('scannerComPortSelect')?.value || p.port || 'COM1';
+  const baud = Number(document.getElementById('scannerBaudRateSelect')?.value) || p.baudRate || 115200;
+  await writeApi(`/api/scanners/${encodeURIComponent(sc.id)}`, { method:'PUT', body: JSON.stringify({
+    commandId: makeCommandId('scanner-com-set'), name: p.name, scannerType: p.scannerType, enabled: p.enabled !== false,
+    port, baudRate: baud, timeoutMilliseconds: p.timeoutMilliseconds ?? 2000, triggerMode: p.triggerMode || 'Software',
+    deviceParameters: p.deviceParameters || {}, reason: 'twin 设置扫码器COM口'
+  }) });
+  log(`已保存扫码器 COM：${port} @ ${baud}`, 'ok');
   await loadDatabaseSnapshot();
 }
 
@@ -5535,8 +5609,15 @@ async function refreshBackendWorkflowProjection() {
   }
 }
 
+// 2026-07-20 应需求放开：Published 工作流版本也允许直接编辑（医生可调已发布流程参数）。
+// 回滚：去掉下面条件里的 "|| profile.status === 'Published'"（并恢复后端 RunVersionCommandAsync 用 RequireDraftVersionAsync）即恢复"仅 Draft 可编辑"。
+function isWorkflowVersionEditable(profile) {
+  return !!profile && CURRENT_USER.role === 'admin'
+    && (profile.status === 'Draft' || profile.status === 'Published');
+}
+
 function renderConfigFilesSection(profile) {
-  const editable = !!profile && profile.status === 'Draft' && CURRENT_USER.role === 'admin';
+  const editable = isWorkflowVersionEditable(profile);
   const opTiles = OP_DEFS.map(op => `<div class="config-op-tile" draggable="true" id="configOpTile-${op.key}" data-op-key="${op.key}" data-control-id="configOpTile-${op.key}">${opShapeHtml(op)}<span>${escapeHtml(op.label)}</span></div>`).join('');
   const steps = profile ? profile.steps : [];
   if(profile && selectedConfigStepIndex >= steps.length) selectedConfigStepIndex = Math.max(0, steps.length - 1);
@@ -5594,9 +5675,9 @@ function renderStepEditor(profile, idx) {
   const safeIdx = Math.max(0, Math.min(idx, profile.steps.length - 1));
   const step = profile.steps[safeIdx];
   const op = stepToDef(step, safeIdx);
-  const editable = profile.status === 'Draft' && CURRENT_USER.role === 'admin';
+  const editable = isWorkflowVersionEditable(profile);
   const disabled = editable ? '' : 'disabled';
-  return `<div class="config-editor" id="configStepEditor" data-control-id="configStepEditor"><strong>编辑第 ${safeIdx+1} 层：${escapeHtml(op.label)}</strong><div class="config-note">${editable?'保存后立即写入数据库草稿。':'当前版本只读；请复制为新版本后编辑。'}</div><div class="config-editor-grid"><label>显示名称<input id="configStepLabelInput" value="${escapeHtml(op.label)}" ${disabled}></label><label>操作类型<select id="configStepOpSelect" ${disabled}>${OP_DEFS.map(d => `<option value="${d.key}" ${d.key===step.opKey?'selected':''}>${escapeHtml(d.label)}</option>`).join('')}</select></label><label>持续时间 / 秒<input id="configStepDurationInput" type="number" min="0" step="1" value="${Number(step.durationSec || 0)}" ${disabled}></label><label>容差 / 秒<input id="configStepToleranceInput" type="number" min="0" step="1" value="${Number(step.toleranceSec || 0)}" ${disabled}></label><label>目标温度 / ℃<input id="configStepTempInput" type="number" step="0.1" value="${step.targetTempC ?? ''}" placeholder="继承配置" ${disabled}></label><label>试剂角色<input id="configStepRoleInput" value="${escapeHtml(step.reagentRole || '')}" placeholder="primary / wash / dab" ${disabled}></label><label>试剂编码<input id="configStepReagentCodeInput" value="${escapeHtml(step.reagentCode || '')}" placeholder="P01 / HEM / WAS" ${disabled}></label><label>加液体积 / μL<input id="configStepVolumeInput" type="number" min="0" step="1" value="${step.volumeUl ?? ''}" placeholder="不加液" ${disabled}></label><label>失败策略<select id="configStepFailureSelect" ${disabled}><option value="Stop" ${step.failureStrategy==='Stop'?'selected':''}>停止</option><option value="Retry" ${step.failureStrategy==='Retry'?'selected':''}>重试</option><option value="Continue" ${step.failureStrategy==='Continue'?'selected':''}>继续</option></select></label></div><label class="config-checkline"><input type="checkbox" id="configStepImmediateInput" ${step.immediateAfterPrev?'checked':''} ${disabled}>本层必须在上一层结束后立即执行，不给机械臂规划留间隔</label><label class="config-checkline"><input type="checkbox" id="configStepTempEnableInput" ${step.requiresTemp?'checked':''} ${disabled}>本层需要控温</label><label class="config-checkline"><input type="checkbox" id="configStepMultiPrimaryInput" ${step.allowMultiPrimary?'checked':''} ${disabled}>允许同轮实验对不同玻片/通道使用多种一抗</label><textarea id="configStepNotesInput" rows="2" placeholder="备注、病理约束或调度提示" ${disabled}>${escapeHtml(step.notes || '')}</textarea><div class="config-toolbar-row"><button type="button" id="configSaveStepBtn" ${disabled}>保存当前步骤</button><button type="button" id="configMoveStepUpBtn" ${disabled}>上移</button><button type="button" id="configMoveStepDownBtn" ${disabled}>下移</button><button type="button" id="configDeleteStepBtn" class="danger" ${disabled}>删除</button></div></div>`;
+  return `<div class="config-editor" id="configStepEditor" data-control-id="configStepEditor"><strong>编辑第 ${safeIdx+1} 层：${escapeHtml(op.label)}</strong><div class="config-note">${editable?'保存后立即写入数据库。':'当前版本只读；请复制为新版本后编辑。'}</div><div class="config-editor-grid"><label>显示名称<input id="configStepLabelInput" value="${escapeHtml(op.label)}" ${disabled}></label><label>操作类型<select id="configStepOpSelect" ${disabled}>${OP_DEFS.map(d => `<option value="${d.key}" ${d.key===step.opKey?'selected':''}>${escapeHtml(d.label)}</option>`).join('')}</select></label><label>持续时间 / 秒<input id="configStepDurationInput" type="number" min="0" step="1" value="${Number(step.durationSec || 0)}" ${disabled}></label><label>容差 / 秒<input id="configStepToleranceInput" type="number" min="0" step="1" value="${Number(step.toleranceSec || 0)}" ${disabled}></label><label>目标温度 / ℃<input id="configStepTempInput" type="number" step="0.1" value="${step.targetTempC ?? ''}" placeholder="继承配置" ${disabled}></label><label>试剂角色<input id="configStepRoleInput" value="${escapeHtml(step.reagentRole || '')}" placeholder="primary / wash / dab" ${disabled}></label><label>试剂编码<input id="configStepReagentCodeInput" value="${escapeHtml(step.reagentCode || '')}" placeholder="P01 / HEM / WAS" ${disabled}></label><label>加液体积 / μL<input id="configStepVolumeInput" type="number" min="0" step="1" value="${step.volumeUl ?? ''}" placeholder="不加液" ${disabled}></label><label>失败策略<select id="configStepFailureSelect" ${disabled}><option value="Stop" ${step.failureStrategy==='Stop'?'selected':''}>停止</option><option value="Retry" ${step.failureStrategy==='Retry'?'selected':''}>重试</option><option value="Continue" ${step.failureStrategy==='Continue'?'selected':''}>继续</option></select></label></div><label class="config-checkline"><input type="checkbox" id="configStepImmediateInput" ${step.immediateAfterPrev?'checked':''} ${disabled}>本层必须在上一层结束后立即执行，不给机械臂规划留间隔</label><label class="config-checkline"><input type="checkbox" id="configStepTempEnableInput" ${step.requiresTemp?'checked':''} ${disabled}>本层需要控温</label><label class="config-checkline"><input type="checkbox" id="configStepMultiPrimaryInput" ${step.allowMultiPrimary?'checked':''} ${disabled}>允许同轮实验对不同玻片/通道使用多种一抗</label><textarea id="configStepNotesInput" rows="2" placeholder="备注、病理约束或调度提示" ${disabled}>${escapeHtml(step.notes || '')}</textarea><div class="config-toolbar-row"><button type="button" id="configSaveStepBtn" ${disabled}>保存当前步骤</button><button type="button" id="configMoveStepUpBtn" ${disabled}>上移</button><button type="button" id="configMoveStepDownBtn" ${disabled}>下移</button><button type="button" id="configDeleteStepBtn" class="danger" ${disabled}>删除</button></div></div>`;
 }
 
 function renderConfigTimelineStepsHtml(profile) {
@@ -5672,7 +5753,7 @@ function refreshConfigFlowWorkbenchOnly() {
 
 function renderConfigRulesSection(profile) {
   const dab = profile?.dabRatio || { a:1, b:1, pureWater:18, preparePolicy:'per_run' };
-  const editable = profile?.status === 'Draft' && CURRENT_USER.role === 'admin';
+  const editable = isWorkflowVersionEditable(profile);
   const disabled = editable ? '' : 'disabled';
   return `<section class="config-pane-section ${activeConfigSection==='rules'?'active':''}" id="configSectionRules" data-control-id="configSectionRules">
     <div class="config-editor config-rules-card" id="configRulesCard" data-control-id="configRulesCard"><strong>病理染色规则 / 规划约束</strong><div class="config-editor-grid"><label>默认目标温度 / ℃<input id="configTargetTempInput" type="number" step="0.1" value="${profile?.targetTempC ?? ''}" placeholder="不控温" ${disabled}></label><label>从第几步开始控温<input id="configTempFromInput" type="number" min="1" max="99" step="1" value="${profile?.tempControlFromStep ?? ''}" placeholder="例如 4" ${disabled}></label><label>DAB A液比例<input id="configDabAInput" type="number" min="1" step="1" value="${dab.a ?? 1}" ${disabled}></label><label>DAB B液比例<input id="configDabBInput" type="number" min="1" step="1" value="${dab.b ?? 1}" ${disabled}></label><label>纯水比例<input id="configDabWaterInput" type="number" min="0" step="1" value="${dab.pureWater ?? 18}" ${disabled}></label><label>DAB配置策略<select id="configDabPolicySelect" ${disabled}><option value="per_run" ${dab.preparePolicy==='per_run'?'selected':''}>每轮实验过程中配置</option><option value="on_demand" ${dab.preparePolicy==='on_demand'?'selected':''}>按需配置</option><option value="pre_mix" ${dab.preparePolicy==='pre_mix'?'selected':''}>预先配置</option></select></label></div><label class="config-checkline"><input type="checkbox" id="configAllowMultiPrimaryInput" ${profile?.allowMultiPrimary?'checked':''} ${disabled}>允许同一轮实验中多种一抗并行调度</label><textarea id="configProfileNotesInput" rows="3" placeholder="通用规则说明" ${disabled}>${escapeHtml(profile?.notes || '')}</textarea><button type="button" id="configSaveRulesBtn" ${disabled}>保存规则到数据库</button><div class="config-note">连续不可间隔的步骤请在“配置/流程”中勾选“紧邻执行”。例如一抗完成后清洗液通常应紧邻；清洗液完成后到二抗可根据容差和机械臂路径规划留出调度窗口。</div></div>
@@ -5896,7 +5977,7 @@ function renderConfigScannerSection() {
         <section class="engineering-card" id="scannerComCard" data-control-id="scannerComCard">
           <strong>COM 口设置</strong>
           <div class="engineering-mini-grid four">
-            ${configSelect('scannerTargetSelect','扫码器',[['sample','样本扫码器（机械臂随动相机）'],['reagent','试剂扫码器']],'sample')}
+            ${configSelect('scannerTargetSelect','扫码器',[['sample','样本扫码器（机械臂随动相机）'],['reagent','试剂扫码器']],'reagent')}
             ${configSelect('scannerComPortSelect','COM口',['COM1','COM2','COM3','COM4'],'COM1')}
             ${configSelect('scannerBaudRateSelect','波特率',['115200','57600','38400','9600'],'115200')}
             ${configTextInput('scannerSerialPresetInput','串口参数','8 bits / 1 bits / 无','')}
@@ -6015,7 +6096,7 @@ function renderConfigThermalSection() {
             ${configNumberInput('thermalMixCountInput','混匀次数','1~255')}
             ${configNumberInput('thermalMixRemainingCountInput','剩余混匀次数','','0')}
           </div>
-          <div class="engineering-actions">${engineeringButton('开始混匀','配置/清洗混匀：开始混匀','primary-lite')}${engineeringButton('混匀复位','配置/清洗混匀：混匀复位')}${engineeringButton('查询混匀','配置/清洗混匀：查询混匀')}</div>
+          <div class="engineering-actions">${engineeringButton('保存参数','配置/清洗混匀：保存混匀参数','ok-lite')}${engineeringButton('开始混匀','配置/清洗混匀：开始混匀','primary-lite')}${engineeringButton('混匀复位','配置/清洗混匀：混匀复位')}${engineeringButton('查询混匀','配置/清洗混匀：查询混匀')}</div>
         </section>
         <section class="engineering-card" id="thermalSampleWashCard" data-control-id="thermalSampleWashCard">
           <div class="engineering-section-title">样本清洗 / 阀状态</div>
@@ -6027,7 +6108,7 @@ function renderConfigThermalSection() {
             ${configTextInput('thermalSolenoidStatusInput','电磁阀状态','关闭')}
             ${configTextInput('thermalSlotOptocouplerInput','仓位光耦状态','未遮挡')}
           </div>
-          <div class="engineering-actions">${engineeringButton('打开样本清洗','配置/清洗混匀：打开样本清洗','primary-lite')}${engineeringButton('关闭样本清洗','配置/清洗混匀：关闭样本清洗')}${engineeringButton('查询阀状态','配置/清洗混匀：查询阀状态')}</div>
+          <div class="engineering-actions">${engineeringButton('保存配置','配置/清洗混匀：保存清洗配置','ok-lite')}${engineeringButton('打开样本清洗','配置/清洗混匀：打开样本清洗','primary-lite')}${engineeringButton('关闭样本清洗','配置/清洗混匀：关闭样本清洗')}${engineeringButton('查询阀状态','配置/清洗混匀：查询阀状态')}</div>
         </section>
       </div>
     </div>
@@ -6243,6 +6324,82 @@ async function stopSampleWash() {
   log('样本清洗已停止', 'ok');
   await loadDatabaseSnapshot();
 }
+// ===== 配置/清洗混匀 → 混匀参数 ↔ 后端 mixer_parameter_profiles（按抽屉 A-D 单行）=====
+async function readMixerParameters() {
+  const drawer = drawerFromChannelSelect('thermalMixChannelSelect');
+  if(!drawer) return; // "全选"无单一抽屉，不下发
+  try {
+    const p = await backendApi(`/api/engineering/mixer-parameters/${encodeURIComponent(drawer)}`);
+    const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = v; };
+    setVal('thermalMixOriginInput', p?.origin);
+    setVal('thermalMixStartStrokeInput', p?.startStroke);
+    setVal('thermalMixTotalStrokeInput', p?.totalStroke);
+    setVal('thermalMixTopDwellInput', p?.topDwellMs);
+    setVal('thermalMixBottomDwellInput', p?.bottomDwellMs);
+    setVal('thermalMixForwardSpeedInput', p?.forwardSpeed);
+    setVal('thermalMixReverseSpeedInput', p?.reverseSpeed);
+    setVal('thermalMixCountInput', p?.targetCycles);
+    setVal('thermalMixRemainingCountInput', p?.remainingCycles);
+  } catch(_) { /* 未保存过：GetAsync 返回默认 0 值，不报错 */ }
+}
+// ===== 配置/清洗混匀 → 样本清洗温度 + 电磁阀开关 ↔ 后端 wash_valve_config_profiles（单行）=====
+async function readWashValveConfig() {
+  try {
+    const c = await backendApi('/api/engineering/wash-valve-config');
+    const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = v; };
+    setVal('sampleWashTempInput', c?.washTempC != null ? c.washTempC : null);
+    const sol = document.getElementById('thermalSolenoidSwitch');
+    if(sol) { sol.classList.toggle('on', !!c?.solenoidOpen); sol.style.background = !!c?.solenoidOpen ? '#16a34a' : '#64748b'; }
+    const stat = document.getElementById('thermalSolenoidStatusInput');
+    if(stat) stat.value = !!c?.solenoidOpen ? '开启' : '关闭';
+  } catch(_) { /* 未保存过：默认值，不报错 */ }
+}
+async function saveWashValveConfig() {
+  const rawTemp = String(document.getElementById('sampleWashTempInput')?.value || '').replace(/[^\d.\-]/g, '');
+  const temp = rawTemp === '' ? null : Number(rawTemp);
+  const solenoidOpen = !!document.getElementById('thermalSolenoidSwitch')?.classList.contains('on');
+  await writeApi('/api/engineering/wash-valve-config', { method:'PUT', body: JSON.stringify({
+    commandId: makeCommandId('wash-valve-config'),
+    washTempC: (temp !== null && Number.isFinite(temp)) ? temp : null,
+    solenoidOpen,
+    reason: '配置/清洗混匀：保存清洗配置'
+  }) });
+  log(`清洗配置已保存到数据库：温度=${(temp !== null && Number.isFinite(temp)) ? temp : '未设'}℃ 电磁阀=${solenoidOpen ? '开' : '关'}`, 'ok');
+  await readWashValveConfig();
+}
+async function saveMixerParameters() {
+  const drawer = drawerFromChannelSelect('thermalMixChannelSelect');
+  if(!drawer) { log('请先在"通道选择"选择具体通道（1-4）再保存混匀参数', 'warn'); return; }
+  const num = id => { const v = document.getElementById(id)?.value; const n = Number(v); return (v === '' || v == null || !Number.isFinite(n)) ? null : Math.round(n); };
+  const body = {
+    commandId: makeCommandId('mixer-params'),
+    origin: (document.getElementById('thermalMixOriginInput')?.value || '').trim() || null,
+    startStroke: num('thermalMixStartStrokeInput'),
+    totalStroke: num('thermalMixTotalStrokeInput'),
+    topDwellMs: num('thermalMixTopDwellInput'),
+    bottomDwellMs: num('thermalMixBottomDwellInput'),
+    forwardSpeed: num('thermalMixForwardSpeedInput'),
+    reverseSpeed: num('thermalMixReverseSpeedInput'),
+    targetCycles: num('thermalMixCountInput'),
+    remainingCycles: num('thermalMixRemainingCountInput'),
+    reason: `配置/清洗混匀：保存混匀参数（通道${drawer}）`
+  };
+  const res = await writeApi(`/api/engineering/mixer-parameters/${encodeURIComponent(drawer)}`, { method:'PUT', body: JSON.stringify(body) });
+  log(`通道${drawer} 混匀参数已保存到数据库${res?.entityId ? '（'+String(res.entityId).slice(0,8)+'）' : ''}`, 'ok');
+  await readMixerParameters();
+}
+// 清洗混匀「查询阀状态」：真实读取流体状态并回显；电磁阀/仓位光耦在 fluidics 状态里未单独追踪时如实标注，不编造。
+async function readFluidicsValveState() {
+  const state = await backendApi('/api/fluidics/state');
+  const pumps = Array.isArray(state?.pumps) ? state.pumps : [];
+  const mixers = Array.isArray(state?.mixers) ? state.mixers : [];
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null) el.value = v; };
+  const sol = state?.solenoid ?? state?.valve ?? state?.solenoidStatus;
+  const opto = state?.slotOptocoupler ?? state?.optocoupler;
+  setVal('thermalSolenoidStatusInput', sol != null ? sol : 'fluidics 状态未单独提供电磁阀字段');
+  setVal('thermalSlotOptocouplerInput', opto != null ? opto : 'fluidics 状态未单独提供仓位光耦字段');
+  log(`查询阀状态：pumps=${pumps.length} mixers=${mixers.length} ready=${state?.ready}（电磁阀/光耦未在 fluidics 状态单独追踪，如实显示，未编造）`, 'ok');
+}
 
 // 调试/配置页 [data-action-log] 工程动作分发器。通道选择 -> drawer A-D（与 4.2 一致）。
 // ===== 调试模块 COM 设置 ↔ 后端 serial_connection_profiles（main-controller）=====
@@ -6442,6 +6599,45 @@ async function autoLoadDebugPrecisionConfig() {
   } catch(e) { /* 进入精度校正子页时静默回填后端配置，失败不阻塞 */ }
 }
 
+// 配置/通道移液：把动作按钮真接到 /api/engineering/pipetting-tests/*（工程会话+危险确认，落库）。
+// 与孪生画布对象点击用的 runPipetteTest(action,item,baseId) 不同，这里读配置页的移液参数输入框。
+async function runConfigPipetteAction(operation, actionLabel) {
+  const hole = document.getElementById('pipetteHoleSelect')?.value || 'P11';
+  const volume = Math.max(0, Number(document.getElementById('pipetteVolumeInput')?.value) || 0);
+  const needle = document.getElementById('pipetteNeedleSelect')?.value || 'Z1';
+  const needleCode = needle === 'Z2' ? 'Needle2' : 'Needle1';
+  const liquidClass = document.getElementById('pipetteLiquidClassSelect')?.value || '';
+  const channel = needle === 'Z2' ? '2' : '1';
+  if(!(await ensureModuleEngineeringSession(`pipetting-test:${operation}`, actionLabel))) return;
+  const body = { CommandId: makeCommandId('cfg-pipette-' + operation), Channel: channel, Position: hole, VolumeUl: volume, NeedleCode: needleCode, Reason: actionLabel, DangerousOperationConfirmed: true };
+  if(liquidClass) body.LiquidClassCode = liquidClass;
+  try {
+    const res = await writeApi(`/api/engineering/pipetting-tests/${encodeURIComponent(operation)}`, { method:'POST', body: JSON.stringify(body) });
+    const con = document.getElementById('pipetteRealtimeConsole');
+    if(con) con.textContent = `[${new Date().toLocaleTimeString()}] ${actionLabel} 已下发 → 通道${channel} 孔位${hole} ${volume}μL ${needle}${liquidClass ? ' ' + liquidClass : ''}\n结果：${(res && (res.message || res.statusText)) || '已执行（模拟，记录已落库）'}`;
+    log(`${actionLabel} 已下发后端：通道${channel} 孔位${hole} ${volume}μL ${needle}`, 'ok');
+    await loadDatabaseSnapshot();
+  } catch(e) { /* routed by writeApi */ }
+}
+
+// 配置/通道移液：从后端坐标档案拉取已启用坐标点填充孔位下拉（占位 P11 不被后端认可）。
+// 过滤为移液相关类型（试剂位/清洗位/DAB 位），免得 438 个点太长；需要别的类型可放宽 wanted。
+async function loadPipetteHoleOptions() {
+  const sel = document.getElementById('pipetteHoleSelect'); if(!sel) return;
+  try {
+    const profs = await backendApi('/api/engineering/coordinate-profiles');
+    const prof = (Array.isArray(profs) ? profs : []).find(p => p && p.isActive) || (Array.isArray(profs) ? profs[0] : null);
+    if(!prof) return;
+    const pts = (prof.points || []).concat((prof.versions || []).flatMap(v => v.targetPoints || []));
+    const wanted = ['ReagentRackPosition', 'WashPosition', 'DabMixPosition'];
+    const enabled = pts.filter(p => p && p.isEnabled && (!p.pointType || wanted.includes(p.pointType)));
+    if(!enabled.length) return;
+    const prev = sel.value;
+    sel.innerHTML = enabled.map(p => `<option value="${escapeHtml(p.pointCode)}">${escapeHtml(p.pointCode)}${p.pointType ? ' · ' + escapeHtml(p.pointType) : ''}</option>`).join('');
+    if(prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+  } catch(e) { /* 拉取失败时回退到本地占位选项，免得下拉为空 */ try { sel.innerHTML = configHoleOptions(sel.value || 'P11'); } catch(_){} }
+}
+
 async function dispatchEngineeringAction(action, btn) {
   if(btn) flashControl(btn);
   const consoleNode = document.querySelector('.test-console');
@@ -6460,6 +6656,11 @@ async function dispatchEngineeringAction(action, btn) {
       log(`${action}：pumps=${(state?.pumps || []).length}, ready=${state?.ready}`, 'ok');
       return;
     }
+    if(action === '配置/清洗混匀：打开样本清洗') return await startSampleWash();
+    if(action === '配置/清洗混匀：关闭样本清洗') return await stopSampleWash();
+    if(action === '配置/清洗混匀：查询阀状态') return await readFluidicsValveState();
+    if(action === '配置/清洗混匀：保存混匀参数') return await saveMixerParameters();
+    if(action === '配置/清洗混匀：保存清洗配置') return await saveWashValveConfig();
     if(action === '配置/混匀加热：开始加热' || action === '配置/混匀加热：停止加热') {
       const isEnabled = action.endsWith('停止加热') ? false : true;
       const rawTemp = Number(String(document.getElementById('mixHeatTargetTempInput')?.value || '').replace(/[^\d.\-]/g, ''));
@@ -6488,7 +6689,9 @@ async function dispatchEngineeringAction(action, btn) {
     if(action === '配置/液体类型：保存液体类型参数' || action === '配置/液体类型：保存吸液加液参数') return await saveLiquidClassParams(false);
     if(action === '配置/液体类型：读取液体类型参数') return await readLiquidClassParams();
     if(action === '配置/扫码器：创建扫码器') return await createScannerProfile();
-    if(['配置/扫码器：设置ROI','配置/扫码器：打开校验光','配置/扫码器：关闭校验光','配置/扫码器：重新启动'].includes(action)) return await scannerControl(action);
+    if(action === '配置/扫码器：设置COM口') return await setScannerComConfig();
+    if(action === '配置/扫码器：读取COM口') return await readScannerComConfig();
+    if(['配置/扫码器：设置ROI','配置/扫码器：打开校验光','配置/扫码器：关闭校验光','配置/扫码器：重新启动','配置/扫码器：激活单次触发','配置/扫码器：停止单次触发','配置/扫码器：激活连续触发','配置/扫码器：停止连续触发','配置/扫码器：读取条码'].includes(action)) return await scannerControl(action);
     if(action === '调试：校正移位精度确认') return await saveDebugPrecisionConfig('move');
     if(action === '调试：校正加样精度确认') return await saveDebugPrecisionConfig('dispense');
     if(action === '调试：设置COM口参数') return await saveDebugComConfig();
@@ -6502,9 +6705,111 @@ async function dispatchEngineeringAction(action, btn) {
     if(action === '调试：打开液体类型配置') return; // 跳转由 openLiquidBtn 绑定负责；这里只避免误报"暂未接入"
     if(action === '调试：读取当前液体类型') return await readDebugLiquidClass();
     if(action === '调试：保存当前液体类型') { showSideTab('config'); renderConfigPane('liquid'); log('液体类型完整参数请在「配置 → 液体类型」编辑并保存（需工程会话）', 'ok'); return; }
+    if(action === '配置/通道移位：保存当前孔位信息') return await savePositionHoleInfo();
+    if(action === '配置/通道移位：读取当前孔位信息') return await readPositionHoleInfo();
+    if(action === '配置/通道移位：移动到当前孔位') return await moveToPositionHole();
+    if(action === '配置/通道移位：绝对坐标移动') return await moveAbsolutePosition();
+    if(action === '配置/通道移位：读取当前坐标') return await readCurrentArmPosition();
+    if(action === '配置/通道移液：吸液') return await runConfigPipetteAction('aspirate', action);
+    if(action === '配置/通道移液：打液') return await runConfigPipetteAction('dispense', action);
+    if(action === '配置/通道移液：打系统液') return await runConfigPipetteAction('flush', action);
+    if(action === '配置/通道移液：液面探测') return await runConfigPipetteAction('liquid-detect', action);
+    if(action === '配置/通道移液：清空通道') return await runConfigPipetteAction('wash', action);
+    if(action === '配置/通道移液：停止动作') { log('停止动作：后端暂无移液停止接口（mock 下动作瞬时完成，无需停止）', 'warn'); return; }
     log(`${action}：暂未接入（样本清洗三按钮按约定保留原样，不绑后端）`, 'warn');
   } catch(err) { /* routed by writeApi where used */ }
   if(consoleNode) consoleNode.textContent += `\n[${new Date().toLocaleTimeString()}] ${action}`;
+}
+
+// ===== 配置/通道移位 ↔ 后端 coordinate_points / coordinate_calibration_history =====
+// UI 孔位码 → 后端 coordinate_points.point_code 映射（依据项目 §11.3–11.5）：
+//   DAB: P11→M1..P42→M8、A液→DabA、B液→DabB
+//   样本: R<通道1-4><槽1-4> → A-D 抽屉的 04/03/02/01（如 R11→A-04、R14→A-01、R44→D-01）
+//   试剂: S<列1-5><行1-8> → R1..R40（如 S11→R1、S58→R40）
+//   洗针: 洗针孔1-4 → WashOuterLeft/Right、WashInnerLeft/Right（§11.5 措辞，按外/内顺序）
+//   排毒孔/废液孔/清洗孔: 无对应坐标点 → null（不校正）。
+function uiHoleToDbPoint(code) {
+  const c = String(code || '').trim();
+  if(!c) return null;
+  const dab = { 'P11':'M1','P12':'M2','P21':'M3','P22':'M4','P31':'M5','P32':'M6','P41':'M7','P42':'M8','A液':'DabA','B液':'DabB' };
+  if(dab[c]) return dab[c];
+  const wash = { '洗针孔1':'WashOuterLeft','洗针孔2':'WashOuterRight','洗针孔3':'WashInnerLeft','洗针孔4':'WashInnerRight' };
+  if(wash[c]) return wash[c];
+  const mSample = c.match(/^R([1-4])([1-4])$/);
+  if(mSample) { const drawer = 'ABCD'[Number(mSample[1]) - 1]; return `${drawer}-0${5 - Number(mSample[2])}`; }
+  const mReagent = c.match(/^S([1-5])([1-8])$/);
+  if(mReagent) return `R${(Number(mReagent[1]) - 1) * 8 + Number(mReagent[2])}`;
+  return null;
+}
+const positionMmToUm = v => { const n = Number(v); return (v === '' || v == null || !Number.isFinite(n)) ? null : Math.round(n * 1000); };
+const positionUmToMm = v => { const n = Number(v); return (v == null || !Number.isFinite(n)) ? null : n / 1000; };
+async function resolveActiveCoordinateProfile() {
+  const list = await backendApi('/api/engineering/coordinate-profiles');
+  const arr = Array.isArray(list) ? list : [];
+  return arr.find(p => p && p.isActive) || arr[0] || null;
+}
+async function savePositionHoleInfo() {
+  const uiCode = String(document.getElementById('positionHoleSelect')?.value || '').trim();
+  const dbPoint = uiHoleToDbPoint(uiCode);
+  if(!dbPoint) { log(`孔位「${uiCode}」没有对应的后端坐标点（排毒/废液/清洗孔未纳入坐标体系），无法校正`, 'warn'); return; }
+  const profile = await resolveActiveCoordinateProfile();
+  if(!profile || !profile.code) { log('未找到活动的坐标档案（coordinate profile），无法校正', 'warn'); return; }
+  const body = {
+    commandId: makeCommandId('coordinate-calibrate'),
+    profileCode: profile.code,
+    pointCode: dbPoint,
+    calibratedXUm: positionMmToUm(document.getElementById('positionHoleXInput')?.value),
+    calibratedYUm: positionMmToUm(document.getElementById('positionHoleYInput')?.value),
+    safeZUm: positionMmToUm(document.getElementById('positionZTravelInput')?.value),
+    aspirateZUm: positionMmToUm(document.getElementById('positionZStartInput')?.value),
+    aspirateEndZUm: positionMmToUm(document.getElementById('positionZEndInput')?.value),
+    dispenseZUm: positionMmToUm(document.getElementById('positionZDispensInput')?.value),
+    reason: `配置/通道移位：保存孔位 ${uiCode}→${dbPoint}`,
+    dangerousOperationConfirmed: true
+  };
+  if(!(await ensureModuleEngineeringSession(`coordinate-calibrate:${dbPoint}`, '配置/通道移位：保存孔位信息'))) return;
+  const res = await writeApi('/api/engineering/coordinate-points/calibrate', { method:'POST', body: JSON.stringify(body) });
+  log(`孔位 ${uiCode}（→${dbPoint}）校正已写入数据库：X/Y + 安全/探液/瓶底/移液 Z 以 µm 落表，生成新草稿版本与校准历史${res?.entityId ? '（'+res.entityId.slice(0,8)+'）' : ''}`, 'ok');
+  await loadDatabaseSnapshot();
+  await readPositionHoleInfo();
+}
+async function readPositionHoleInfo() {
+  const uiCode = String(document.getElementById('positionHoleSelect')?.value || '').trim();
+  const dbPoint = uiHoleToDbPoint(uiCode);
+  const profile = await resolveActiveCoordinateProfile();
+  if(!profile) { log('未找到活动坐标档案', 'warn'); return; }
+  const points = Array.isArray(profile.points) ? profile.points : [];
+  const pt = dbPoint ? points.find(p => p && p.pointCode === dbPoint) : null;
+  if(!pt) { log(`孔位「${uiCode}」（→${dbPoint || '无对应'}）在活动坐标档案 ${profile.code} 中未找到坐标点`, 'warn'); return; }
+  const setMm = (id, um) => { const mm = positionUmToMm(um); const el = document.getElementById(id); if(el && mm !== null) el.value = mm; };
+  setMm('positionHoleXInput', pt.calibratedXUm ?? pt.presetXUm);
+  setMm('positionHoleYInput', pt.calibratedYUm ?? pt.presetYUm);
+  setMm('positionZTravelInput', pt.safeZUm);
+  setMm('positionZStartInput', pt.aspirateZUm);
+  setMm('positionZEndInput', pt.aspirateEndZUm);
+  setMm('positionZDispensInput', pt.dispenseZUm);
+  log(`已读取孔位 ${uiCode}（→${dbPoint}）坐标：X=${positionUmToMm(pt.calibratedXUm ?? pt.presetXUm)}mm Y=${positionUmToMm(pt.calibratedYUm ?? pt.presetYUm)}mm（µm÷1000 回显，未触发机械动作）`, 'ok');
+}
+async function readCurrentArmPosition() {
+  // 真实读取设备状态；Mock 下不编造机械臂坐标。
+  let state = null;
+  try { state = await backendApi('/api/device/state'); } catch(e) { log('读取当前坐标：设备状态接口不可用', 'warn'); return; }
+  const homed = state?.robotArmHome ?? state?.robotArm?.homed ?? state?.robot?.homed;
+  if(homed == null && state?.currentXUm == null && state?.currentYUm == null) { log('当前坐标：设备状态未提供实时机械臂坐标（Mock 未开放坐标追踪），未编造数值', 'warn'); return; }
+  log(`当前机械臂：homed=${homed ?? '—'}${state?.currentXUm != null ? ` X=${positionUmToMm(state.currentXUm)}mm` : ''}${state?.currentYUm != null ? ` Y=${positionUmToMm(state.currentYUm)}mm` : ''}`, 'ok');
+}
+async function moveToPositionHole() {
+  const uiCode = String(document.getElementById('positionHoleSelect')?.value || '').trim();
+  const dbPoint = uiHoleToDbPoint(uiCode);
+  const x = document.getElementById('positionHoleXInput')?.value;
+  const y = document.getElementById('positionHoleYInput')?.value;
+  log(`移动到孔位 ${uiCode}（→${dbPoint || '无'}）目标 X=${x || '—'} Y=${y || '—'}：运动指令需真实硬件，当前 Mock/未开放，未执行真实移动、未写库（坐标请用「保存当前孔位信息」落库）`, 'warn');
+}
+async function moveAbsolutePosition() {
+  const x = document.getElementById('positionAbsoluteXInput')?.value;
+  const y = document.getElementById('positionAbsoluteYInput')?.value;
+  const z = document.getElementById('positionAbsoluteZInput')?.value;
+  log(`绝对坐标移动 X=${x || '—'} Y=${y || '—'} Z=${z || '—'}：运动指令需真实硬件，当前 Mock/未开放，未执行真实移动、未写库`, 'warn');
 }
 
 function bindEngineeringControlHandlers(root=document) {
@@ -6520,6 +6825,27 @@ function bindEngineeringControlHandlers(root=document) {
   if(openLiquidBtn && !openLiquidBtn.dataset.openLiquidBound) {
     openLiquidBtn.dataset.openLiquidBound = 'true';
     openLiquidBtn.addEventListener('click', () => { showSideTab('config'); renderConfigPane('liquid'); });
+  }
+  const mixChSel = root.querySelector('#thermalMixChannelSelect');
+  if(mixChSel && !mixChSel.dataset.mixerParamBound) {
+    mixChSel.dataset.mixerParamBound = 'true';
+    mixChSel.addEventListener('change', () => { readMixerParameters(); });
+    readMixerParameters(); // 首次进入回填当前抽屉的已存参数（"全选"时不下发）
+  }
+  readWashValveConfig(); // 首次进入回填已存的清洗温度/电磁阀状态
+  const solSwitch = root.querySelector('#thermalSolenoidSwitch');
+  if(solSwitch && !solSwitch.dataset.washValveBound) {
+    solSwitch.dataset.washValveBound = 'true';
+    solSwitch.style.cursor = 'pointer';
+    solSwitch.style.transition = 'background .15s';
+    solSwitch.style.background = solSwitch.classList.contains('on') ? '#16a34a' : '#64748b';
+    solSwitch.title = '点击切换电磁阀预期开闭状态（保存到数据库）';
+    solSwitch.addEventListener('click', async () => {
+      const on = !solSwitch.classList.contains('on');
+      solSwitch.classList.toggle('on', on);
+      solSwitch.style.background = on ? '#16a34a' : '#64748b';
+      try { await saveWashValveConfig(); } catch(_) {}
+    });
   }
   const washSwitch = root.querySelector('#sampleWashSwitch');
   if(washSwitch && !washSwitch.dataset.washBound) {
@@ -6669,13 +6995,19 @@ function bindConfigHandlers() {
     liquidSel.dataset.liquidCodeBound = 'true';
     liquidSel.addEventListener('change', () => { currentLiquidClassCode = String(liquidSel.value || currentLiquidClassCode || 'Ab'); });
   }
+  // 扫码器子页：进入即把已保存的 COM + ROI 回填到输入框，避免切换子页后值"丢失"。
+  if(document.getElementById('scannerComPortSelect') || document.getElementById('scannerRoiLeftInput')) {
+    loadScannerConfigIntoInputs();
+  }
 }
 
 function requireEditableProfile() {
   const profile = getSelectedProfile();
   if(!profile) { log('请先选择配置脚本', 'warn'); return null; }
-  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以编辑和发布配置脚本', 'warn'); return null; }
-  if(profile.status !== 'Draft') { log('已发布版本不可直接修改，请先复制为新版本', 'warn'); return null; }
+  if(!isWorkflowVersionEditable(profile)) {
+    log(CURRENT_USER.role === 'admin' ? '该版本不可编辑（仅 Draft/Published 可编辑）' : '只有管理员可以编辑和发布配置脚本', 'warn');
+    return null;
+  }
   return profile;
 }
 async function refreshWorkflowEditor(profileId, section='files', stepIndex=selectedConfigStepIndex) {

@@ -818,7 +818,7 @@ public sealed class WorkflowMaintenanceService(
             actor,
             async () =>
             {
-                var version = await RequireDraftVersionAsync(workflowVersionId, cancellationToken);
+                var version = await RequireEditableVersionAsync(workflowVersionId, cancellationToken);
                 var message = await mutate(version);
                 var response = new CommandResponse(true, commandId, false, message);
                 return new CommandExecutionResult<CommandResponse>(response, "WorkflowVersion", version.Id);
@@ -850,6 +850,21 @@ public sealed class WorkflowMaintenanceService(
         if (version.Status != WorkflowVersionStatus.Draft)
         {
             throw new BusinessRuleException("workflow_version_not_draft", "Only Draft workflow versions can be modified.", StatusCodes.Status409Conflict);
+        }
+
+        return version;
+    }
+
+    // 2026-07-20 应需求放开：允许直接编辑 Published 工作流版本的步骤/规则（医生可调已发布流程参数）。
+    // 回滚方案：把下面条件改回 `version.Status != WorkflowVersionStatus.Draft`（并改回 RequireDraftVersionAsync）即可恢复"仅 Draft 可编辑"。
+    private async Task<WorkflowVersion> RequireEditableVersionAsync(string workflowVersionId, CancellationToken cancellationToken)
+    {
+        var version = await LoadVersionQuery()
+            .SingleOrDefaultAsync(x => x.Id == workflowVersionId, cancellationToken)
+            ?? throw new BusinessRuleException("workflow_version_not_found", "Workflow version was not found.", StatusCodes.Status404NotFound);
+        if (version.Status != WorkflowVersionStatus.Draft && version.Status != WorkflowVersionStatus.Published)
+        {
+            throw new BusinessRuleException("workflow_version_not_editable", "Only Draft or Published workflow versions can be modified.", StatusCodes.Status409Conflict);
         }
 
         return version;

@@ -22,6 +22,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<ScannerRegion> ScannerRegions => Set<ScannerRegion>();
     public DbSet<SerialConnectionProfile> SerialConnectionProfiles => Set<SerialConnectionProfile>();
     public DbSet<PrecisionCalibrationProfile> PrecisionCalibrationProfiles => Set<PrecisionCalibrationProfile>();
+    public DbSet<MixerParameterProfile> MixerParameterProfiles => Set<MixerParameterProfile>();
+    public DbSet<WashValveConfigProfile> WashValveConfigProfiles => Set<WashValveConfigProfile>();
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
     public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
@@ -102,6 +104,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureScannerRegion(modelBuilder);
         ConfigureSerialConnectionProfile(modelBuilder);
         ConfigurePrecisionCalibrationProfile(modelBuilder);
+        ConfigureMixerParameterProfile(modelBuilder);
+        ConfigureWashValveConfigProfile(modelBuilder);
         ConfigureCoordinateProfile(modelBuilder);
         ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
@@ -280,6 +284,12 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
             var originalStatus = entry.Property(x => x.Status).OriginalValue;
             if (originalStatus == WorkflowVersionStatus.Published && !IsAllowedPublishedLifecycleChange(entry))
             {
+                // 2026-07-20 应需求放开：允许原地"修改"Published 版本本身（规则/名称等）。删除 Published 仍禁止。
+                // 回滚：去掉这个 if 即恢复"Published 版本不可原地修改"。
+                if (AllowPublishedWorkflowChildEdits && entry.State == EntityState.Modified)
+                {
+                    continue;
+                }
                 throw new InvalidOperationException("Published workflow versions cannot be modified in place. Create a new version for changes.");
             }
         }
@@ -414,11 +424,22 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
             .ToDictionary(x => x.Key, x => x.First().Entity.Status);
     }
 
+    // 2026-07-20 应需求放开：允许直接修改 Published 工作流版本及其步骤/试剂需求（医生可调已发布流程参数，含规则/名称等版本级字段；删除 Published 仍禁止）。
+    // 回滚方案：把下面常量改成 false，即恢复"Published 不可原地修改"。
+    //   配套回滚点：WorkflowMaintenanceService.RunVersionCommandAsync 改回 RequireDraftVersionAsync；
+    //               前端 isWorkflowVersionEditable 去掉 "|| profile.status === 'Published'"。
+    private const bool AllowPublishedWorkflowChildEdits = true;
+
     private static void EnsureWorkflowChildrenDoNotModifyPublishedVersions(
         string[] changedChildVersionIds,
         string[] addedVersionIds,
         IReadOnlyDictionary<string, string> persistedStatuses)
     {
+        if (AllowPublishedWorkflowChildEdits)
+        {
+            return;
+        }
+
         var addedVersionIdSet = addedVersionIds.ToHashSet(StringComparer.Ordinal);
         foreach (var workflowVersionId in changedChildVersionIds)
         {
@@ -920,6 +941,43 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.DispenseTargetVolumeUl).HasColumnName("dispense_target_volume_ul");
         entity.Property(x => x.DispenseMeasuredVolumeUl).HasColumnName("dispense_measured_volume_ul");
         entity.Property(x => x.DispenseCalibrationFactor).HasColumnName("dispense_calibration_factor");
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.ScopeKey).IsUnique();
+    }
+
+    private static void ConfigureMixerParameterProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<MixerParameterProfile>();
+        entity.ToTable("mixer_parameter_profiles");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(4).IsRequired();
+        entity.Property(x => x.Origin).HasColumnName("origin").HasMaxLength(64);
+        entity.Property(x => x.StartStroke).HasColumnName("start_stroke");
+        entity.Property(x => x.TotalStroke).HasColumnName("total_stroke");
+        entity.Property(x => x.TopDwellMs).HasColumnName("top_dwell_ms");
+        entity.Property(x => x.BottomDwellMs).HasColumnName("bottom_dwell_ms");
+        entity.Property(x => x.ForwardSpeed).HasColumnName("forward_speed");
+        entity.Property(x => x.ReverseSpeed).HasColumnName("reverse_speed");
+        entity.Property(x => x.TargetCycles).HasColumnName("target_cycles");
+        entity.Property(x => x.RemainingCycles).HasColumnName("remaining_cycles");
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.DrawerCode).IsUnique();
+    }
+
+    private static void ConfigureWashValveConfigProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<WashValveConfigProfile>();
+        entity.ToTable("wash_valve_config_profiles");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.ScopeKey).HasColumnName("scope_key").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.WashTempC).HasColumnName("wash_temp_c").HasColumnType("TEXT");
+        entity.Property(x => x.SolenoidOpen).HasColumnName("solenoid_open").IsRequired();
         entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");

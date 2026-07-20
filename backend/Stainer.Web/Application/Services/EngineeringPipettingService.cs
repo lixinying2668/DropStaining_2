@@ -120,7 +120,8 @@ public sealed class EngineeringPipettingService(
                     var channel = NormalizeChannel(request.Channel);
                     var needleCode = NormalizeNeedleCode(
                         request.NeedleCode ?? ReadOperationString(request, "needleCode") ?? "Needle1");
-                    var position = NormalizePosition(request.Position ?? request.CoordinatePointCode);
+                    var rawPosition = request.Position ?? request.CoordinatePointCode;
+                var position = NormalizePosition(FriendlyPointCodeResolver.Resolve(rawPosition) ?? rawPosition);
                     var volumeUl = ResolveVolumeUl(operationType, request);
                     var coordinatePoint = await RequireCoordinatePointAsync(position, request.CoordinateProfileVersionId, cancellationToken);
                     var liquidClass = await ResolveLiquidClassAsync(operationType, request, cancellationToken);

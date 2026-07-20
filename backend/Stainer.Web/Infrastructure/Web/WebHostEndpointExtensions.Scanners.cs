@@ -127,5 +127,19 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.ApplyRoiAsync(id, request, actor, cancellationToken));
             }));
+
+        app.MapPost("/api/scanners/{id}/trigger", async (HttpContext context, string id, ScannerTriggerRequest request, UserSessionService sessionService, ScannerControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.TriggerScannerAsync(id, request, actor, cancellationToken));
+            }));
+
+        app.MapPost("/api/scanners/{id}/barcode/read", async (HttpContext context, string id, ScannerBarcodeRequest request, UserSessionService sessionService, ScannerControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.ReadBarcodeAsync(id, request, actor, cancellationToken));
+            }));
     }
 }

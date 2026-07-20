@@ -95,6 +95,49 @@ public sealed class ScannerControlService(
             cancellationToken);
     }
 
+    public Task<ScannerControlResponse> TriggerScannerAsync(
+        string scannerProfileId,
+        ScannerTriggerRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        var mode = (request.Mode ?? string.Empty).Trim().ToLowerInvariant();
+        var commandText = mode switch
+        {
+            "single" => "RDCMXEV1,P11,P20",      // 单次扫描
+            "continuous" => "RDCMXEV1,P11,P21",   // 连续扫描
+            "stop" => "RDCMXEV1,P10",             // 停止扫描
+            _ => throw new BusinessRuleException("scanner_trigger_mode_invalid", "Mode must be one of: single, continuous, stop.", StatusCodes.Status400BadRequest)
+        };
+        return ExecuteAsync(
+            scannerProfileId,
+            request.CommandId,
+            request.Reason,
+            "scanner_control.trigger",
+            "TriggerScanner",
+            [new ScannerControlCommand($"trigger.{mode}", commandText)],
+            actor,
+            cancellationToken);
+    }
+
+    // 读取条码：触发一次单次扫描(RDCMXEV1,P11,P20)，DCR55 回传的条码文本在返回值的 Steps[0].ResponseText。
+    public Task<ScannerControlResponse> ReadBarcodeAsync(
+        string scannerProfileId,
+        ScannerBarcodeRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return ExecuteAsync(
+            scannerProfileId,
+            request.CommandId,
+            request.Reason,
+            "scanner_control.barcode.read",
+            "ReadBarcode",
+            [new ScannerControlCommand("barcode.read", "RDCMXEV1,P11,P20")],
+            actor,
+            cancellationToken);
+    }
+
     private Task<ScannerControlResponse> ExecuteAsync(
         string scannerProfileId,
         string commandId,
@@ -330,6 +373,8 @@ public sealed class ScannerControlService(
         "EnableCalibrationLight" => "scanner_control.calibration_light.enable",
         "DisableCalibrationLight" => "scanner_control.calibration_light.disable",
         "ApplyROI" => "scanner_control.roi.apply",
+        "TriggerScanner" => "scanner_control.trigger",
+        "ReadBarcode" => "scanner_control.barcode.read",
         _ => "scanner_control.command"
     };
 

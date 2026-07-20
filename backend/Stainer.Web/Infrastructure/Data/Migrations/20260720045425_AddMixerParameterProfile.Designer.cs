@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Stainer.Web.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using Stainer.Web.Infrastructure.Data;
 namespace Stainer.Web.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(StainerDbContext))]
-    partial class StainerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260720045425_AddMixerParameterProfile")]
+    partial class AddMixerParameterProfile
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -5266,47 +5269,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("wash_positions", (string)null);
-                });
-
-            modelBuilder.Entity("Stainer.Web.Domain.Entities.WashValveConfigProfile", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("enabled");
-
-                    b.Property<string>("ScopeKey")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("scope_key");
-
-                    b.Property<bool>("SolenoidOpen")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("solenoid_open");
-
-                    b.Property<DateTimeOffset?>("UpdatedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("updated_at_utc");
-
-                    b.Property<decimal?>("WashTempC")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("wash_temp_c");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ScopeKey")
-                        .IsUnique();
-
-                    b.ToTable("wash_valve_config_profiles", (string)null);
                 });
 
             modelBuilder.Entity("Stainer.Web.Domain.Entities.WorkflowAssignmentHistory", b =>

@@ -100,6 +100,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ScannerConfigurationService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<PrecisionCalibrationConfigService>();
+        services.AddScoped<MixerParameterConfigService>();
+        services.AddScoped<WashValveConfigService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();
