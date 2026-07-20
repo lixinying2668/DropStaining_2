@@ -45,10 +45,14 @@
     <Compile Include="BridgeHost.cs" />
     <Compile Include="BridgeRequestProcessor.cs" />
     <Compile Include="BridgeStatus.cs" />
+    <Compile Include="ISoconReadOnlyAdapter.cs" />
     <Compile Include="PeArchitectureInspector.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="RealReadOnlySessionGate.cs" />
+    <Compile Include="ReflectionBasedSoconReadOnlyAdapter.cs" />
     <Compile Include="SdkDeploymentValidator.cs" />
     <Compile Include="SelfTestRunner.cs" />
+    <Compile Include="SoconReadOnlyConfig.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />

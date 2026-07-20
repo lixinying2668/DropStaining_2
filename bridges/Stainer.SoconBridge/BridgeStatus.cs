@@ -7,7 +7,12 @@ namespace Stainer.SoconBridge
         SdkPathMissing,
         SdkFilesMissing,
         ArchitectureInvalid,
-        DeploymentValidated
+        DeploymentValidated,
+        SdkVersionInconsistent,
+        RealReadOnlyNotEnabled,
+        SessionClosed,
+        SessionOpen,
+        SessionBlocked
     }
 
     internal static class BridgeWarningCodes

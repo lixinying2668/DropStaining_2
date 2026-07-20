@@ -1,4 +1,23 @@
 {
   "sdkDirectory": "",
-  "diagnosticsEnabled": true
+  "diagnosticsEnabled": true,
+  "realReadOnlyEnabled": false,
+  "usb2can": {
+    "connectionType": "CONN_USB",
+    "portNumber": 0,
+    "baudRate": 0
+  },
+  "whitelistNodes": [],
+  "axisMappings": {
+    "x": null,
+    "y": null,
+    "z1": null,
+    "z2": null
+  },
+  "axisCalibration": {
+    "x": false,
+    "y": false,
+    "z1": false,
+    "z2": false
+  }
 }

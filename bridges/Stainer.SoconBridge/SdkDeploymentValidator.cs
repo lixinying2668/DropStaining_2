@@ -385,8 +385,16 @@ namespace Stainer.SoconBridge
                 details.MissingFiles = missingRuntimeDependencies;
                 warnings.Add(BridgeWarningCodes.SdkRuntimeDependenciesWarning);
                 details.WarningCodes = new List<string>(warnings);
+                details.SdkVersionStatus = "NotChecked";
+                return new SdkDeploymentValidationResult(BridgeStatus.DeploymentValidated, details, warnings, runtimeDetails);
             }
 
+            // Vendor components carry independent FileVersion values (for
+            // example, SOCON.API and SOCON.Utility do not share a release
+            // number). No vendor package manifest has been supplied that
+            // could safely establish cross-DLL version compatibility, so do
+            // not reject a complete, loadable deployment on that basis.
+            details.SdkVersionStatus = "NotChecked";
             return new SdkDeploymentValidationResult(BridgeStatus.DeploymentValidated, details, warnings, runtimeDetails);
         }
 

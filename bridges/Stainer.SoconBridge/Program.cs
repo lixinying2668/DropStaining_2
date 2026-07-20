@@ -6,12 +6,23 @@ namespace Stainer.SoconBridge
     internal static class Program
     {
         private const string SelfTestArgument = "--self-test";
+        private const string EnableRealReadOnlyArgument = "--enable-real-read-only";
 
         public static int Main(string[] args)
         {
             if (args != null && args.Length == 1 && string.Equals(args[0], SelfTestArgument, StringComparison.OrdinalIgnoreCase))
             {
                 return SelfTestRunner.Run(Console.Out);
+            }
+
+            var enableRealReadOnly = args != null
+                && args.Length == 1
+                && string.Equals(args[0], EnableRealReadOnlyArgument, StringComparison.OrdinalIgnoreCase);
+
+            if (args != null && args.Length > 0 && !enableRealReadOnly)
+            {
+                Console.Error.WriteLine("Unsupported Bridge startup argument.");
+                return 2;
             }
 
             bool created;
@@ -23,7 +34,9 @@ namespace Stainer.SoconBridge
                     return 2;
                 }
 
-                var processor = BridgeRequestProcessor.CreateDefault(AppDomain.CurrentDomain.BaseDirectory);
+                var processor = BridgeRequestProcessor.CreateDefault(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    enableRealReadOnly);
                 var host = new BridgeHost(BridgeHost.DefaultPipeName, processor);
 
                 Console.CancelKeyPress += delegate(object sender, ConsoleCancelEventArgs eventArgs)

@@ -51,8 +51,13 @@ namespace Stainer.SoconBridge
                 DeploymentValidatedWithCompleteFakeFiles();
                 DeploymentValidatedWithRuntimeWarnings();
                 ActionCommandsAreNotSupported();
+                ReadOnlySessionGateFailsClosed();
+                ReadOnlySessionDispatchesOnlyFakeAdapter();
                 LengthPrefixedProtocolRejectsMalformedRequests();
                 ConfiguredSdkRuntimeValidation();
+                ReadOnlySessionRejectedWhenRuntimeDependencyWarning();
+                ReadOnlySessionRejectedWhenPortOrBaudInvalid();
+                ReadOnlySessionCloseFailsWhenClosePortReturnsFalse();
             }
 
             private void PingReturnsOffline()
@@ -227,6 +232,206 @@ namespace Stainer.SoconBridge
                 }
 
                 Assert(validator.Count == 0, "Action commands must not validate SDK deployment.");
+            }
+
+            private void ReadOnlySessionGateFailsClosed()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var processor = new BridgeRequestProcessor(
+                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, false),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return new FakeReadOnlyAdapter();
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-read-only-gate",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(!response.Success, "Read-only session must be rejected when the launch gate is off.");
+                Assert(response.Message == "RealReadOnlyNotEnabled", "Gate rejection must be explicit.");
+                Assert(factoryCalls == 0, "Disabled gate must not construct an adapter.");
+            }
+
+            private void ReadOnlySessionDispatchesOnlyFakeAdapter()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var validation = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-read-only-validate",
+                    Command = "ValidateSdkDeployment"
+                });
+                Assert(validation.Success, "Read-only session requires successful deployment validation.");
+
+                var open = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-read-only-open",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+                Assert(open.Success, "Enabled read-only session should open through the fake adapter.");
+                Assert(fake.OpenCount == 1, "Open must be the only session-start adapter call.");
+
+                var status = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-read-only-status",
+                    Command = "GetConfiguredNodeBasicStatus"
+                });
+                Assert(status.Success, "Basic status should be read through the fake adapter.");
+                Assert(status.Details.Initialized == "true", "Basic status must return initialized state.");
+                Assert(status.Details.Homed == "true", "Basic status must return homed state.");
+
+                var position = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-read-only-position",
+                    Command = "GetConfiguredAxisPositions",
+                    Axis = "x"
+                });
+                Assert(position.Success, "Calibrated X position should be read through the fake adapter.");
+                Assert(position.Details.Position == "x=12.5", "Position response should be role-labeled and invariant-culture formatted.");
+                Assert(fake.PositionReadCount == 1, "Position read should call the fake adapter exactly once.");
+
+                var close = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-read-only-close",
+                    Command = "CloseConfiguredReadOnlySession"
+                });
+                Assert(close.Success, "Read-only session should close through the fake adapter.");
+                Assert(close.Details.SessionState == "Closed", "Close should report a closed session.");
+                Assert(close.Details.CacheValid == false, "Close must invalidate cached reads.");
+                Assert(fake.CloseCount == 1, "Close must be called exactly once.");
+            }
+
+            private void ReadOnlySessionRejectedWhenRuntimeDependencyWarning()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var processor = new BridgeRequestProcessor(
+                    new CountingValidator(BridgeStatus.DeploymentValidated, new List<string> { BridgeWarningCodes.SdkRuntimeDependenciesWarning }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return new FakeReadOnlyAdapter();
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-runtime-warning-reject",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(!response.Success, "Runtime dependency warning must reject open.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when runtime warning is present.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when runtime warning is present.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
+            }
+
+            private void ReadOnlySessionRejectedWhenPortOrBaudInvalid()
+            {
+                // Sub-case 1: portNumber=0
+                {
+                    var baseConfig = CreateReadOnlyConfig();
+                    baseConfig.Usb2Can.PortNumber = 0;
+                    var config = SoconReadOnlyConfig.FromBridgeConfig(baseConfig);
+                    var factoryCalls = 0;
+                    var processor = new BridgeRequestProcessor(
+                        new CountingValidator(BridgeStatus.DeploymentValidated),
+                        BridgeStatus.Offline,
+                        config,
+                        new RealReadOnlySessionGate(config, true),
+                        delegate
+                        {
+                            factoryCalls++;
+                            return new FakeReadOnlyAdapter();
+                        });
+
+                    var response = processor.Process(new BridgeRequest
+                    {
+                        RequestId = "self-test-port-invalid",
+                        Command = "OpenConfiguredReadOnlySession"
+                    });
+
+                    Assert(!response.Success, "PortNumber=0 must reject open.");
+                    Assert(factoryCalls == 0, "Adapter must not be constructed when PortNumber=0.");
+                    Assert(response.Details.SessionState == "Blocked", "Session must be blocked when PortNumber=0.");
+                    Assert(response.Details.BlockReason == "OpenPortNumberInvalid", "Block reason must be OpenPortNumberInvalid.");
+                }
+
+                // Sub-case 2: baudRate=0
+                {
+                    var baseConfig = CreateReadOnlyConfig();
+                    baseConfig.Usb2Can.BaudRate = 0;
+                    var config = SoconReadOnlyConfig.FromBridgeConfig(baseConfig);
+                    var factoryCalls = 0;
+                    var processor = new BridgeRequestProcessor(
+                        new CountingValidator(BridgeStatus.DeploymentValidated),
+                        BridgeStatus.Offline,
+                        config,
+                        new RealReadOnlySessionGate(config, true),
+                        delegate
+                        {
+                            factoryCalls++;
+                            return new FakeReadOnlyAdapter();
+                        });
+
+                    var response = processor.Process(new BridgeRequest
+                    {
+                        RequestId = "self-test-baud-invalid",
+                        Command = "OpenConfiguredReadOnlySession"
+                    });
+
+                    Assert(!response.Success, "BaudRate=0 must reject open.");
+                    Assert(factoryCalls == 0, "Adapter must not be constructed when BaudRate=0.");
+                    Assert(response.Details.SessionState == "Blocked", "Session must be blocked when BaudRate=0.");
+                    Assert(response.Details.BlockReason == "OpenBaudRateInvalid", "Block reason must be OpenBaudRateInvalid.");
+                }
+            }
+
+            private void ReadOnlySessionCloseFailsWhenClosePortReturnsFalse()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(false);
+                var processor = new BridgeRequestProcessor(
+                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-close-fail-open",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+                Assert(open.Success, "Open must succeed before testing close failure.");
+                Assert(fake.OpenCount == 1, "Open must be called exactly once.");
+
+                var close = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-close-fail-close",
+                    Command = "CloseConfiguredReadOnlySession"
+                });
+                Assert(!close.Success, "Close must fail when adapter Close returns false.");
+                Assert(close.Details.SessionState == "Blocked", "Session must be blocked after failed close.");
+                Assert(close.Details.CacheValid == false, "Cache must be invalid after failed close.");
+                Assert(fake.CloseCount == 1, "Adapter Close must be called exactly once.");
             }
 
             private void LengthPrefixedProtocolRejectsMalformedRequests()
@@ -521,13 +726,96 @@ namespace Stainer.SoconBridge
             }
         }
 
+        private static BridgeConfig CreateReadOnlyConfig()
+        {
+            return new BridgeConfig
+            {
+                SdkDirectory = "self-test-sdk",
+                RealReadOnlyEnabled = true,
+                Usb2Can = new Usb2CanConfig
+                {
+                    ConnectionType = "CONN_USB",
+                    PortNumber = 9,
+                    BaudRate = 9600
+                },
+                WhitelistNodes = new List<int> { 10, 11, 12, 13 },
+                AxisMappings = new AxisMappings
+                {
+                    X = new AxisMapping { NodeId = 10, Axis = "X" },
+                    Y = new AxisMapping { NodeId = 11, Axis = "Y" },
+                    Z1 = new AxisMapping { NodeId = 12, Axis = "Z" },
+                    Z2 = new AxisMapping { NodeId = 13, Axis = "Z" }
+                },
+                AxisCalibration = new AxisCalibration
+                {
+                    X = true,
+                    Y = true,
+                    Z1 = true,
+                    Z2 = true
+                }
+            };
+        }
+
+        private sealed class FakeReadOnlyAdapter : ISoconReadOnlyAdapter
+        {
+            private readonly bool closeSucceeds;
+
+            public int OpenCount { get; private set; }
+            public int PositionReadCount { get; private set; }
+            public int CloseCount { get; private set; }
+
+            public FakeReadOnlyAdapter()
+                : this(true)
+            {
+            }
+
+            public FakeReadOnlyAdapter(bool closeSucceeds)
+            {
+                this.closeSucceeds = closeSucceeds;
+            }
+
+            public SoconAdapterResult Open(ReadOnlySessionParameters parameters)
+            {
+                OpenCount++;
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconBasicStatusResult ReadBasicStatus(ReadOnlySessionParameters parameters)
+            {
+                return new SoconBasicStatusResult { Confirmed = true, Initialized = true, Homed = true };
+            }
+
+            public SoconAxisPositionResult ReadAxisPosition(ReadOnlySessionParameters parameters)
+            {
+                PositionReadCount++;
+                return new SoconAxisPositionResult { Success = true, PositionMillimeters = 12.5d };
+            }
+
+            public SoconAdapterResult Close()
+            {
+                CloseCount++;
+                return new SoconAdapterResult { Success = closeSucceeds };
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+
         private sealed class CountingValidator : ISdkDeploymentValidator
         {
             private readonly BridgeStatus status;
+            private readonly List<string> warnings;
 
             public CountingValidator(BridgeStatus status)
+                : this(status, null)
+            {
+            }
+
+            public CountingValidator(BridgeStatus status, List<string> warnings)
             {
                 this.status = status;
+                this.warnings = warnings ?? new List<string>();
             }
 
             public int Count { get; private set; }
@@ -535,7 +823,7 @@ namespace Stainer.SoconBridge
             public SdkDeploymentValidationResult Validate()
             {
                 Count++;
-                return new SdkDeploymentValidationResult(status, new BridgeResponseDetails(), new List<string>());
+                return new SdkDeploymentValidationResult(status, new BridgeResponseDetails(), warnings);
             }
         }
 
