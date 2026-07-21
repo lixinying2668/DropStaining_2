@@ -3963,12 +3963,11 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
   currentTarget = visualTarget || null;
   if(!nextArm && !visualTarget) return;
   const armMatchesStep = !!(runtimeStep?.id && nextArm?.workflowStepExecutionId === runtimeStep.id);
-  // 吸液类步骤（带试剂的 Dispense/Pipette，排除 wash/dab/heat）始终走「步骤对应试剂位」stepTarget，
-  // 不被后端机械臂终态（玻片）覆盖——让"吸取试剂"稳定可见、且与该步试剂一一对应（HE/IHC 一致）。
-  const _lkRk = String(runtimeStep?.reagentCode || '').toUpperCase();
+  // 加液类(Dispense/Pipette)步骤直接跟随后端机械臂真实位置 nextArm：后端已按“试剂源位吸液 → 玻片排液”顺序移动机械臂，
+  // 前端不再用 stepTarget 覆盖，避免每步开头先跳到玻片——正确序列应是 home → 试剂区 → 玻片。
   const _lkAct = `${runtimeStep?.majorStepCode || ''} ${runtimeStep?.actionType || ''}`.toLowerCase();
-  const stepIsLiquidAdd = !!(runtimeStep && _lkRk && !_lkAct.includes('wash') && !_lkAct.includes('dab') && !_lkAct.includes('heat') && !_lkAct.includes('temp'));
-  const preferTimelineTarget = !!(running && stepTarget && (!armMatchesStep || stepIsLiquidAdd));
+  const stepIsDispense = /dispens|pipett/i.test(_lkAct) && !_lkAct.includes('wash');
+  const preferTimelineTarget = !!(running && stepTarget && !armMatchesStep && !stepIsDispense);
   const end = {
     x:Number(homeVisualTarget?.x ?? (preferTimelineTarget ? stepTarget?.x : nextArm?.x) ?? stepTarget?.x ?? arm.x),
     y:Number(homeVisualTarget?.y ?? (preferTimelineTarget ? stepTarget?.y : nextArm?.y) ?? stepTarget?.y ?? arm.y),
@@ -4116,7 +4115,7 @@ function renderWellEngineeringEditor(item, baseId) {
   return `<section class="object-engineering-card" id="${baseId}-well-engineering-card" data-control-id="${baseId}-well-engineering-card"><strong>孔位移位 / Z 高度配置<span class="engineering-pill">对象化</span></strong><div class="object-form-grid three"><label>液体类型<select id="${baseId}-liquid-class" data-control-id="${baseId}-liquid-class"><option ${liquid==='Ab'?'selected':''}>Ab</option><option ${liquid==='AR'?'selected':''}>AR</option><option ${liquid==='DAB'?'selected':''}>DAB</option><option ${liquid==='Wash'?'selected':''}>Wash</option><option>Custom</option></select></label><label>Z-Travel 安全移动高度<input id="${baseId}-z-travel" data-control-id="${baseId}-z-travel" type="number" value="30"></label><label>Z-Start 探液高度<input id="${baseId}-z-start" data-control-id="${baseId}-z-start" type="number" value="8"></label><label>Z-End 针尖最大下降深度<input id="${baseId}-z-end" data-control-id="${baseId}-z-end" type="number" value="2"></label><label>Z-Dispens 吸液/排液高度<input id="${baseId}-z-dispens" data-control-id="${baseId}-z-dispens" type="number" value="6"></label><label>孔位对象<input value="${escapeHtml(item.name)}" readonly></label></div><div class="object-actions"><button type="button" data-object-action="读取孔位参数" data-object-name="${escapeHtml(item.name)}">读取</button><button type="button" class="ok-lite" data-object-action="保存孔位参数" data-object-name="${escapeHtml(item.name)}">保存</button><button type="button" class="primary-lite" data-object-action="移动到孔位" data-object-name="${escapeHtml(item.name)}">移动</button></div></section>`;
 }
 function renderObjectPipetteEditor(item, baseId) {
-  return `<section class="object-engineering-card" id="${baseId}-pipette-card" data-control-id="${baseId}-pipette-card"><strong>通道移液测试<span class="engineering-pill">当前孔位</span></strong><div class="object-form-grid three"><label>孔位<input id="${baseId}-pipette-well" data-control-id="${baseId}-pipette-well" value="${escapeHtml(item.name)}" readonly></label><label>液量 / μL<input id="${baseId}-pipette-volume" data-control-id="${baseId}-pipette-volume" type="number" value="100"></label><label>控制针<select id="${baseId}-pipette-needle" data-control-id="${baseId}-pipette-needle"><option>Z1</option><option>Z2</option><option>双针</option></select></label></div><div class="object-actions"><button type="button" class="primary-lite" data-object-action="吸液" data-object-name="${escapeHtml(item.name)}">吸液</button><button type="button" data-object-action="打液" data-object-name="${escapeHtml(item.name)}">打液</button><button type="button" data-object-action="打系统液" data-object-name="${escapeHtml(item.name)}">打系统液</button><button type="button" data-object-action="液面探测" data-object-name="${escapeHtml(item.name)}">液面探测</button><button type="button" class="warn-lite" data-object-action="清空通道" data-object-name="${escapeHtml(item.name)}">清空通道</button><button type="button" data-object-action="停止动作" data-object-name="${escapeHtml(item.name)}">停止动作</button></div></section>`;
+  return `<section class="object-engineering-card" id="${baseId}-pipette-card" data-control-id="${baseId}-pipette-card"><strong>通道移液测试<span class="engineering-pill">当前孔位</span></strong><div class="object-form-grid three"><label>孔位<input id="${baseId}-pipette-well" data-control-id="${baseId}-pipette-well" value="${escapeHtml(item.name)}" readonly></label><label>液量 / μL<input id="${baseId}-pipette-volume" data-control-id="${baseId}-pipette-volume" type="number" value="100"></label><label>控制针<select id="${baseId}-pipette-needle" data-control-id="${baseId}-pipette-needle"><option>Z1</option><option>Z2</option><option>双针</option></select></label><label>液体类型（吸液/打液必填）<select id="${baseId}-pipette-liquid-class" data-control-id="${baseId}-pipette-liquid-class"></select></label></div><div class="object-actions"><button type="button" class="primary-lite" data-object-action="吸液" data-object-name="${escapeHtml(item.name)}">吸液</button><button type="button" data-object-action="打液" data-object-name="${escapeHtml(item.name)}">打液</button><button type="button" data-object-action="打系统液" data-object-name="${escapeHtml(item.name)}">打系统液</button><button type="button" data-object-action="液面探测" data-object-name="${escapeHtml(item.name)}">液面探测</button><button type="button" class="warn-lite" data-object-action="清空通道" data-object-name="${escapeHtml(item.name)}">清空通道</button><button type="button" data-object-action="停止动作" data-object-name="${escapeHtml(item.name)}">停止动作</button></div></section>`;
 }
 // 通道移液动作 -> pipetting-tests 端点（映射来自 /api/engineering/pipetting-tests/types）
 const PIPETTE_ACTIONS = { '吸液':'aspirate', '打液':'dispense', '打系统液':'flush', '液面探测':'liquid-detect', '清空通道':'wash' };
@@ -4126,18 +4125,26 @@ async function runPipetteTest(action, item, baseId) {
   const well = (document.getElementById(`${baseId}-pipette-well`)?.value || item?.name || '').trim();
   const volume = Number(document.getElementById(`${baseId}-pipette-volume`)?.value);
   const needleRaw = String(document.getElementById(`${baseId}-pipette-needle`)?.value || 'Z1').trim();
+  const needleCode = needleRaw === 'Z2' ? 'Needle2' : 'Needle1';
   const channel = needleRaw === 'Z2' ? '2' : '1'; // Z1/双针->通道1, Z2->通道2（设备双针）
+  const liquidClass = (document.getElementById(`${baseId}-pipette-liquid-class`)?.value || '').trim();
+  if((endpoint === 'aspirate' || endpoint === 'dispense') && !liquidClass) {
+    log(`${action} 需要先选择「液体类型」（吸液/打液必须指定 LiquidClass）`, 'warn'); return;
+  }
+  if(!(await ensureModuleEngineeringSession(`pipetting-test:${endpoint}:${well}`, `twin 移液测试 ${action}@${well}`))) return;
   await writeApi(`/api/engineering/pipetting-tests/${endpoint}`, { method:'POST', body: JSON.stringify({
     commandId: makeCommandId('pipette-' + endpoint),
     channel,
+    needleCode,
+    liquidClassCode: liquidClass || null,
     position: well,
     coordinatePointCode: well,
     volumeUl: Number.isFinite(volume) ? volume : null,
     reason: `twin 移液测试 ${action}@${well}`,
     target: `pipetting-test:${endpoint}:${well}`,
-    dangerousOperationConfirmed: false
+    dangerousOperationConfirmed: true
   }) });
-  log(`${action}（${well}）已下发，需管理员 + 工程会话`, 'ok');
+  log(`${action}（${well}）已下发后端：通道${channel} ${Number.isFinite(volume) ? volume + 'μL' : ''} ${needleCode}`, 'ok');
   await loadDatabaseSnapshot();
 }
 
@@ -4331,10 +4338,10 @@ async function reagentPositionScan(rackCode, mode, label) {
   try {
     const scanSessionId = await ensureReagentScanSession();
     if(!scanSessionId) { log('未能建立试剂扫码会话', 'err'); return; }
-    const qrAction = mode === 'stop' ? 'stop' : (mode === 'clear' ? 'clear' : 'start');
+    const qrAction = mode === 'stop' ? 'reset' : (mode === 'clear' ? 'clear' : 'start'); // 后端无 /qr/stop；停止=复位(reset)
     await writeApi(`/api/device/reagent-scanner/qr/${qrAction}`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('reagent-qr-' + qrAction), position: rackCode, scanSessionId }) });
     if(mode === 'scan') {
-      const rawBarcode = String(prompt(`试剂位 ${display} (${rackCode})：输入扫描到的条码（Mock）`, 'HEM080220260712001') || '').trim();
+      const rawBarcode = String(prompt(`试剂位 ${display} (${rackCode})：输入扫描到的条码（Mock，须 17 位：试剂码3+数量3+批号8+序列号3）`, 'HEM08020260712001') || '').trim();
       if(!rawBarcode) { log(`试剂位 ${display} (${rackCode}) 扫码已取消`, 'warn'); return; }
       await writeApi('/api/device/reagent-scanner/qr/report', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('reagent-qr-report'), position: rackCode, scanSessionId, text: rawBarcode }) });
       await writeApi('/api/reagents/scan-confirm', { method:'POST', body: JSON.stringify({
@@ -4363,6 +4370,9 @@ function bindObjectEngineeringDetail(item, baseId) {
       dispatchObjectAction(action, item, baseId, btn);
     });
   });
+  // 对象化移液测试的液体类型下拉：复用液体类型缓存填充（吸液/打液需要 LiquidClass）。
+  const lcEl = document.getElementById(`${baseId}-pipette-liquid-class`);
+  if(lcEl && !lcEl.dataset.liquidClassBound) { lcEl.dataset.liquidClassBound = 'true'; refreshLiquidClassOptionsCache().then(() => rebuildLiquidClassSelect(lcEl, currentLiquidClassCode)); }
 }
 
 function renderCoordinateEditor(item, baseId) {

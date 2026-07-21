@@ -13,6 +13,8 @@ public sealed class MotionControlService(
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int PipetteAspirateVisibleMs = 700;
+    private const int PipetteWashVisibleMs = 600;
     private const long MinXUm = -100_000;
     private const long MaxXUm = 600_000;
     private const long MinYUm = -100_000;
@@ -258,6 +260,21 @@ public sealed class MotionControlService(
                 return MotionDeviceResult.Failed(arm.LastErrorCode ?? "robot_arm_not_ready", arm.LastErrorMessage ?? "Robot arm is not ready.", MapStatusToDeviceStatus(arm.Status), ArmData(arm));
             }
 
+            // 洗针：每个加液步吸液前，先把机械臂移到洗针位并停留，让"排完液体→洗针→再吸液"过程可见。
+            // 试剂位仍由 ResolveSourceAsync 解析（source.SourcePositionCode，与该步试剂一一对应），这里只增加洗针移动。
+            var washPoint = FindWashStationPoint(snapshot);
+            if (washPoint is not null)
+            {
+                arm.Status = MotionStatuses.Idle;
+                arm.CurrentTargetPointCode = washPoint.PointCode;
+                arm.CurrentXUm = washPoint.CalibratedXUm;
+                arm.CurrentYUm = washPoint.CalibratedYUm;
+                arm.CurrentZUm = washPoint.SafeZUm ?? washPoint.CalibratedZUm;
+                ApplyContext(arm, request);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await Task.Delay(PipetteWashVisibleMs, cancellationToken);
+            }
+
             // 吸液阶段：先把机械臂移到「该步骤对应试剂」源位并持久化一次，使"在试剂位吸液"成为可观测的中间状态（而非直接跳到玻片）。
             arm.Status = MotionStatuses.Idle;
             arm.CurrentTargetPointCode = source.SourcePositionCode;
@@ -267,6 +284,7 @@ public sealed class MotionControlService(
             arm.CoordinateProfileVersionId = snapshot.CoordinateProfileVersionId;
             ApplyContext(arm, request);
             await dbContext.SaveChangesAsync(cancellationToken);
+            await Task.Delay(PipetteAspirateVisibleMs, cancellationToken); // 让“在试剂源位吸液”过程可见（不是一闪而过）
 
             var secondaryTarget = Convert.ToString(request.Parameters.GetValueOrDefault("secondaryTargetPointCode"));
             AddOperation(PipettingOperationTypes.LiquidDetect, DeviceCommandStatus.Completed, request, needle.NeedleCode, executionMode, source.SourcePositionCode, null, source.SourceType, reagentCode, source.ReagentBottleId, source.DabBatchId, source.SystemLiquidSourceType, source.SourcePositionCode, volume);
@@ -736,6 +754,14 @@ public sealed class MotionControlService(
         {
             throw new BusinessRuleException("coordinate_snapshot_invalid", "Frozen coordinate snapshot could not be parsed.", StatusCodes.Status409Conflict);
         }
+    }
+
+    private static CoordinateSnapshotPoint? FindWashStationPoint(CoordinateSnapshot snapshot)
+    {
+        // 优先内壁洗针位；找不到则任意 Wash* 位；再找不到返回 null（调用方跳过洗针移动，不崩）。
+        return snapshot.TargetPoints.FirstOrDefault(x => string.Equals(x.PointCode, "WashInnerLeft", StringComparison.OrdinalIgnoreCase))
+            ?? snapshot.TargetPoints.FirstOrDefault(x => x.PointCode is not null && x.PointCode.StartsWith("Wash", StringComparison.OrdinalIgnoreCase))
+            ?? snapshot.TargetPoints.FirstOrDefault(x => string.Equals(x.PointCode, "NeedleWash", StringComparison.OrdinalIgnoreCase));
     }
 
     private static CoordinateSnapshotPoint RequireFrozenTarget(CoordinateSnapshot snapshot, string? pointCode)

@@ -11,6 +11,7 @@ namespace Stainer.Web.Application.Services;
 public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDeviceAdapter deviceAdapter)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int StepVisibleDelayMs = 1500;
     private readonly Channel<MachineExecutorCommand> commands = Channel.CreateUnbounded<MachineExecutorCommand>();
     private readonly ConcurrentDictionary<string, ControlFlags> flags = new(StringComparer.Ordinal);
     private IServiceScopeFactory? scopeFactory;
@@ -367,6 +368,13 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             command.Status = DeviceCommandStatus.DeviceAcknowledged;
             command.AcknowledgedAtUtc = DateTimeOffset.UtcNow;
             await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        // Mock/Twin 可视化：让每个步骤保持一段可见时长，前端机械臂动画才来得及展示“到试剂位吸液→排液”等过程。
+        // Real 模式设备动作 fail-closed，不会执行到此处。值可调（毫秒）。
+        if (deviceResult.Ok)
+        {
+            await Task.Delay(StepVisibleDelayMs, cancellationToken);
         }
 
         var deviceOutcomeUnknown = deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut
