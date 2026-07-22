@@ -97,6 +97,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeviceModeService>();
         services.AddScoped<DeviceControlService>();
         services.AddScoped<ReagentQrScannerDeviceOperationService>();
+        services.AddScoped<IReagentHardwareSink, ReagentHardwareSink>();
         services.AddScoped<ScannerConfigurationService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<PrecisionCalibrationConfigService>();
@@ -182,7 +183,13 @@ public static class ServiceCollectionExtensions
     private static IServiceCollection AddRuntimeMessagingServices(this IServiceCollection services)
     {
         services.AddSingleton<InMemoryRuntimeEventPublisher>();
-        services.AddSingleton<IRuntimeEventPublisher>(serviceProvider => serviceProvider.GetRequiredService<InMemoryRuntimeEventPublisher>());
+        // 试剂区硬件通信旁挂：用装饰器替代裸 InMemoryRuntimeEventPublisher 作为 IRuntimeEventPublisher 的解析目标。
+        // MachineEventSignalRDispatcher 注入的是具体类 InMemoryRuntimeEventPublisher（inner），仍读 inner 的 channel，零感知、零改动。
+        // ReagentScanWriteService 注入 IRuntimeEventPublisher，运行时自动拿到装饰器（业务零改）。
+        services.AddSingleton<ReagentHardwareEventDecorator>(serviceProvider => new ReagentHardwareEventDecorator(
+            serviceProvider.GetRequiredService<InMemoryRuntimeEventPublisher>(),
+            serviceProvider.GetRequiredService<IConfiguration>()));
+        services.AddSingleton<IRuntimeEventPublisher>(serviceProvider => serviceProvider.GetRequiredService<ReagentHardwareEventDecorator>());
         services.AddSingleton<MachineExecutor>();
 
         return services;
@@ -194,6 +201,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<MachineExecutorHostedService>();
         services.AddHostedService<DabExpiryHostedService>();
         services.AddHostedService<MachineEventSignalRDispatcher>();
+        services.AddHostedService<ReagentHardwareDispatcher>();
 
         return services;
     }
