@@ -193,6 +193,7 @@
   .arm-rail-light { stroke:#cbd5e1; stroke-width:3; stroke-linecap:round; }
   .arm-y { stroke:#111827; stroke-width:7; stroke-linecap:round; filter:drop-shadow(0 5px 8px rgba(15,23,42,.18)); }
   .arm-head { fill:#111827; stroke:#fff; stroke-width:2; }
+  .arm-main-hit { fill:transparent; stroke:transparent; pointer-events:all; }
   .needle { fill:#f8fafc; stroke:#0f172a; stroke-width:1.5; }
   .needle.extended { fill:#60a5fa; filter:drop-shadow(0 0 7px rgba(37,99,235,.5)); }
   .needle.warn { fill:#f59e0b; }
@@ -314,7 +315,8 @@
   .layout-resize-handle { width:8px; min-width:8px; align-self:stretch; cursor:col-resize; display:flex; align-items:center; justify-content:center; user-select:none; touch-action:none; }
   .layout-resize-handle::before { content:""; width:3px; height:58px; border-radius:999px; background:#cbd5e1; box-shadow:0 0 0 1px rgba(255,255,255,.75); transition:.16s ease; }
   .layout-resize-handle:hover::before, .layout-resize-handle.dragging::before { background:#2563eb; height:84px; box-shadow:0 0 0 4px rgba(37,99,235,.12); }
-  .svg-control-selected circle, .svg-control-selected rect, .svg-control-selected path { stroke:#111827 !important; stroke-width:3 !important; filter:drop-shadow(0 0 10px rgba(37,99,235,.55)); animation:selectedSvgBlink 1s infinite; }
+  .svg-control-selected circle, .svg-control-selected rect, .svg-control-selected path, .svg-control-selected line { stroke:#111827 !important; stroke-width:3 !important; filter:drop-shadow(0 0 10px rgba(37,99,235,.55)); animation:selectedSvgBlink 1s infinite; }
+  .svg-control-selected .arm-main-hit { stroke:transparent !important; filter:none !important; animation:none !important; }
   .svg-control-selected .camera-status, .svg-control-selected .camera-lens { filter:drop-shadow(0 0 8px rgba(37,99,235,.72)); }
   @keyframes selectedSvgBlink { 0%,100% { opacity:1; } 50% { opacity:.62; } }
 
@@ -906,9 +908,9 @@
   .config-module { height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); overflow:hidden; }
   .config-pane-section { min-height:0; overflow:hidden; }
   .config-pane-section.active:not(.config-integrated-section) { height:100%; min-height:0; overflow:hidden; }
-  #configSectionScanner.active, #configSectionBarcode.active, #configSectionPosition.active,
+  #configSectionScanner.active, #configSectionArm.active, #configSectionBarcode.active, #configSectionPosition.active,
   #configSectionLiquidClass.active, #configSectionPipette.active, #configSectionThermal.active { display:grid; grid-template-rows:1fr; }
-  #configSectionScanner .engineering-config-module, #configSectionBarcode .engineering-config-module,
+  #configSectionScanner .engineering-config-module, #configSectionArm .engineering-config-module, #configSectionBarcode .engineering-config-module,
   #configSectionPosition .engineering-config-module, #configSectionLiquidClass .engineering-config-module,
   #configSectionPipette .engineering-config-module, #configSectionThermal .engineering-config-module {
     height:100%; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); gap:8px; overflow:hidden;
@@ -920,7 +922,7 @@
   #configSectionScanner .engineering-config-module { grid-template-rows:auto minmax(0,.34fr) minmax(0,.33fr) minmax(0,.33fr); }
   #configSectionBarcode .engineering-config-module { grid-template-rows:auto minmax(0,.46fr) minmax(0,.54fr); }
   #configSectionPipette .engineering-config-module { grid-template-rows:auto minmax(0,1fr); }
-  #configSectionScanner .engineering-card, #configSectionBarcode .engineering-card, #configSectionPosition .engineering-card,
+  #configSectionScanner .engineering-card, #configSectionArm .engineering-card, #configSectionBarcode .engineering-card, #configSectionPosition .engineering-card,
   #configSectionPipette .engineering-card, #configSectionThermal .engineering-card { min-height:0; overflow:auto; }
   #configSectionLiquidClass .liquid-class-layout { height:100%; grid-template-columns:minmax(0,1fr) 150px; align-items:stretch; }
   #configSectionLiquidClass .liquid-class-layout > .engineering-config-module { grid-template-rows:minmax(0,.28fr) minmax(0,.38fr) minmax(0,.34fr); overflow:hidden; }
@@ -977,10 +979,12 @@
   .user-row-actions button { min-height:28px; padding:4px 7px; border-radius:9px; font-size:11px; }
   .login-permission-note { border:1px solid #dbeafe; border-radius:14px; background:#eff6ff; padding:9px; color:#334155; font-size:12px; line-height:1.45; }
   #rightConsoleCard[data-view="config"] #configSectionScanner .engineering-config-module,
+  #rightConsoleCard[data-view="config"] #configSectionArm .engineering-config-module,
   #rightConsoleCard[data-view="config"] #configSectionBarcode .engineering-config-module {
     grid-template-columns:repeat(2, minmax(0,1fr)); grid-template-rows:auto minmax(0,1fr) !important; align-items:stretch;
   }
   #rightConsoleCard[data-view="config"] #configSectionScanner .engineering-status-strip,
+  #rightConsoleCard[data-view="config"] #configSectionArm .engineering-status-strip,
   #rightConsoleCard[data-view="config"] #configSectionBarcode .engineering-status-strip { grid-column:1 / -1; }
   #rightConsoleCard[data-view="config"] #configSectionScanner #scannerCommandCard { grid-column:1 / -1; }
   #rightConsoleCard[data-view="config"] #configSectionScanner .engineering-grid,
@@ -994,6 +998,7 @@
   @media (max-width:1180px) {
     .login-role-grid, .user-management-grid { grid-template-columns:1fr; }
     #rightConsoleCard[data-view="config"] #configSectionScanner .engineering-config-module,
+    #rightConsoleCard[data-view="config"] #configSectionArm .engineering-config-module,
     #rightConsoleCard[data-view="config"] #configSectionBarcode .engineering-config-module,
     #rightConsoleCard[data-view="config"] #configSectionScanner .engineering-grid,
     #rightConsoleCard[data-view="config"] #configSectionPosition .engineering-grid,
@@ -1986,6 +1991,7 @@
   #configSectionPosition.active,
   #configSectionPipette.active,
   #configSectionScanner.active,
+  #configSectionArm.active,
   #configSectionBarcode.active,
   #configSectionThermal.active,
   #configSectionLiquidClass.active {
@@ -1998,6 +2004,7 @@
   #configSectionPosition .engineering-config-module,
   #configSectionPipette .engineering-config-module,
   #configSectionScanner .engineering-config-module,
+  #configSectionArm .engineering-config-module,
   #configSectionBarcode .engineering-config-module,
   #configSectionThermal .engineering-config-module,
   #configSectionLiquidClass .engineering-config-module {
@@ -2041,9 +2048,11 @@
   .config-position-layout,
   .config-pipette-layout,
   .config-scanner-layout,
+  .config-arm-layout,
   .config-barcode-layout,
   .config-thermal-layout { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; align-items:start; }
   .config-scanner-layout .engineering-card.wide,
+  .config-arm-layout .engineering-card.wide,
   .config-barcode-layout .engineering-card.wide,
   .config-thermal-layout .engineering-card.wide { grid-column:1 / -1; }
   .config-hole-z-grid { display:grid; grid-template-columns:minmax(100px,.7fr) minmax(0,1fr); gap:8px; align-items:start; }
@@ -3485,6 +3494,43 @@ function showScannerDetail(key='reagent', xMm=null, yMm=null) {
     </div>`;
   bindGenericObjectActionButtons(box);
 }
+function showArmMainDetail() {
+  const svgId = 'svg-arm-main';
+  const label = '机械臂主体';
+  selectedName = null;
+  selectedSvgControlId = svgId;
+  showSideTab('production');
+  const box = document.getElementById('detailBox'); if(!box) return;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('digitalTwinArmComConfig') || 'null'); } catch(e) { saved = null; }
+  const cfg = saved || { port:'COM1', baud:'115200', serial:'8 bits / 1 bits / 无' };
+  box.innerHTML = `<div class="scanner-detail-title"><strong>${label}</strong><span class="engineering-pill">${svgId}</span></div>
+    <div>状态：待机　当前位置：X ${Number(arm.x ?? 0).toFixed(1)} / Y ${Number(arm.y ?? 0).toFixed(1)}</div>
+    <div class="object-engineering-panel" id="${svgId}-object-engineering" data-control-id="${svgId}-object-engineering">
+      <section class="object-engineering-card" id="${svgId}-com-card" data-control-id="${svgId}-com-card">
+        <strong>COM 口设置<span class="engineering-pill">${label}</span></strong>
+        <div class="object-form-grid three">
+          <label>设备<input id="${svgId}-device" data-control-id="${svgId}-device" value="${label}" readonly></label>
+          <label>COM口<select id="${svgId}-com" data-control-id="${svgId}-com"><option ${cfg.port==='COM1'?'selected':''}>COM1</option><option ${cfg.port==='COM2'?'selected':''}>COM2</option><option ${cfg.port==='COM3'?'selected':''}>COM3</option><option ${cfg.port==='COM4'?'selected':''}>COM4</option></select></label>
+          <label>波特率<select id="${svgId}-baud" data-control-id="${svgId}-baud"><option ${cfg.baud==='115200'?'selected':''}>115200</option><option ${cfg.baud==='57600'?'selected':''}>57600</option><option ${cfg.baud==='38400'?'selected':''}>38400</option><option ${cfg.baud==='9600'?'selected':''}>9600</option></select></label>
+          <label>数据位<input id="${svgId}-data-bits" data-control-id="${svgId}-data-bits" value="8 bits" readonly></label>
+          <label>停止位<input id="${svgId}-stop-bits" data-control-id="${svgId}-stop-bits" value="1 bits" readonly></label>
+          <label>校验位<input id="${svgId}-parity" data-control-id="${svgId}-parity" value="无" readonly></label>
+        </div>
+        <div class="object-actions">
+          <button type="button" class="ok-lite" data-arm-main-action="set-com">设置COM口</button>
+          <button type="button" data-arm-main-action="read-com">读取COM口</button>
+          <button type="button" class="warn-lite" data-arm-main-action="restart-com">重新启动</button>
+        </div>
+      </section>
+      <section class="object-engineering-card" id="${svgId}-communication-card" data-control-id="${svgId}-communication-card">
+        <strong>通讯反馈<span class="engineering-pill">前端模拟</span></strong>
+        <div class="object-form-grid"><label>通讯状态<input id="${svgId}-status" data-control-id="${svgId}-status" value="待配置 / 模拟" readonly></label><label>串口参数<input id="${svgId}-serial" data-control-id="${svgId}-serial" value="${escapeHtml(cfg.serial || '8 bits / 1 bits / 无')}" readonly></label></div>
+        <div class="test-console" id="${svgId}-console" data-control-id="${svgId}-console">[SIM] 机械臂主体 COM 通讯未连接。\n[SIM] 点击“设置COM口 / 读取COM口 / 重新启动”仅更新前端状态与日志。</div>
+      </section>
+    </div>`;
+  bindArmMainDetailControls(box);
+}
 function showNeedleDetail(needle='Z1') {
   const z = String(needle).toUpperCase() === 'Z2' ? 'Z2' : 'Z1';
   const idx = z === 'Z1' ? 1 : 2;
@@ -3533,6 +3579,7 @@ function getControlIdRegistry() {
   fixedSvgControls.push({ id:'svg-reagent-temperature-control', name:'试剂温度', category:'试剂制冷' });
   fixedSvgControls.push({ id:'reagentTempText', name:'试剂温度文本', category:'试剂制冷' });
   fixedSvgControls.push({ id:'svg-camera-reagent-scanner', name:'试剂扫码相机', category:'相机' });
+  fixedSvgControls.push({ id:'svg-arm-main', name:'机械臂主体', category:'机械臂' });
   fixedSvgControls.push({ id:'svg-arm-needle-z1', name:'针头_Z1', category:'机械臂' });
   fixedSvgControls.push({ id:'svg-arm-needle-z2', name:'针头_Z2', category:'机械臂' });
   fixedSvgControls.push({ id:'svg-arm-camera-follow', name:'机械臂随动相机', category:'机械臂' });
@@ -3942,9 +3989,18 @@ function renderArmStatic() {
   clearLayer(armLayer);
   const [left, railY] = mmToPx(transform.maxX, -5);
   const [right] = mmToPx(transform.minX, -5);
-  armLayer.appendChild(el('line', { id:'svg-arm-x-rail', 'data-control-id':'svg-arm-x-rail', x1:left, y1:railY, x2:right, y2:railY, class:'arm-rail' }));
-  armLayer.appendChild(el('line', { id:'svg-arm-x-rail-highlight', x1:left+10, y1:railY, x2:right-10, y2:railY, class:'arm-rail-light' }));
-  armLayer.appendChild(el('g', { id:'armDynamic' }));
+  const armMain = clickableGroup('g', controlAttrs('svg-arm-main', { 'aria-label':'机械臂主体' }));
+  armMain.appendChild(el('rect', { id:'svg-arm-main-rail-hit', 'data-control-id':'svg-arm-main-rail-hit', x:Math.min(left, right) - 12, y:railY - 18, width:Math.abs(right - left) + 24, height:36, class:'arm-main-hit' }));
+  armMain.appendChild(el('line', { id:'svg-arm-x-rail', 'data-control-id':'svg-arm-x-rail', x1:left, y1:railY, x2:right, y2:railY, class:'arm-rail' }));
+  armMain.appendChild(el('line', { id:'svg-arm-x-rail-highlight', x1:left+10, y1:railY, x2:right-10, y2:railY, class:'arm-rail-light' }));
+  armMain.appendChild(el('g', { id:'armDynamic' }));
+  armMain.addEventListener('click', evt => {
+    evt.stopPropagation();
+    selectSvgControl(armMain);
+    showArmMainDetail();
+    log('已选择机械臂主体：打开对象详情', 'ok');
+  });
+  armLayer.appendChild(armMain);
   updateArmVisual();
 }
 function addNeedleTag(parent, cx, cy, text, idBase) {
@@ -3960,6 +4016,7 @@ function updateArmVisual() {
   const [p2x,p2y] = mmToPx(arm.x, arm.y + 25);
   const [,railY] = mmToPx(arm.x, -5);
   const ext1 = 8 + arm.z1 * 22, ext2 = 8 + arm.z2 * 22;
+  g.appendChild(el('rect', { id:'svg-arm-main-body-hit', 'data-control-id':'svg-arm-main-body-hit', x:p1x-24, y:railY-22, width:48, height:(p2y + 36) - (railY - 22), rx:10, class:'arm-main-hit' }));
   g.appendChild(el('line', { id:'svg-arm-y-axis', 'data-control-id':'svg-arm-y-axis', x1:p1x, y1:railY, x2:p1x, y2:p2y+30, class:'arm-y' }));
   g.appendChild(el('rect', { id:'svg-arm-head', 'data-control-id':'svg-arm-head', x:p1x-18, y:railY-15, width:36, height:30, rx:8, class:'arm-head' }));
   g.appendChild(el('line', { id:'svg-arm-needle-z1-stroke', x1:p1x, y1:p1y-ext1, x2:p1x, y2:p1y+ext1, class:'needle-line' }));
@@ -5137,7 +5194,7 @@ function showSideTab(target) {
   const configPaneEl = document.getElementById('configPane');
   const leavingConfig = view !== 'config' && configPaneEl?.classList.contains('active');
   if(leavingConfig) configPaneEl.replaceChildren();
-  if(view === 'config') enterFlowWidePanel(); else leaveFlowWidePanel();
+  if(view === 'config') syncConfigPanelWidth(activeConfigSection); else leaveFlowWidePanel();
   Object.entries(panes).forEach(([key, id]) => {
     const pane = document.getElementById(id);
     if(pane) pane.classList.toggle('active', key === view);
@@ -5865,7 +5922,8 @@ const CONFIG_SECTION_META = [
   ['pipette','通道移液','按孔位和针头执行吸液、打液、打系统液、液面探测与清空通道测试。'],
   ['mixheat','混匀加热','控制通道样本目标温度、当前温度读取、开始加热、停止加热和温度查询。'],
   ['thermal','清洗混匀','维护混匀参数、样本清洗、电磁阀和仓位光耦；试剂制冷和供水已迁移到状态对象详情。'],
-  ['scanner','扫码器','创建/选择样本或试剂扫码器，配置串口、ROI、校验光与重启。']
+  ['scanner','扫码器','创建/选择样本或试剂扫码器，配置串口、ROI、校验光与重启。'],
+  ['arm','机械臂','配置机械臂主体通讯 COM 口、波特率和串口参数；当前仅前端模拟反馈。']
 ];
 const CONFIG_SECTION_KEYS = new Set(CONFIG_SECTION_META.map(([key]) => key));
 function normalizeConfigSectionKey(section) {
@@ -5885,6 +5943,7 @@ function renderConfigSection(section, profile) {
     case 'pipette': return renderConfigPipetteSection();
     case 'mixheat': return renderConfigMixHeatSection();
     case 'scanner': return renderConfigScannerSection();
+    case 'arm': return renderConfigArmSection();
     case 'barcode': return renderConfigBarcodeSection();
     case 'thermal': return renderConfigThermalSection();
     default: return renderConfigFilesSection(profile);
@@ -5897,12 +5956,16 @@ function setConfigCardView(section=activeConfigSection) {
   if(card && pane?.classList.contains('active')) card.dataset.view = isFlowWorkspace ? 'config-edit' : 'config';
   return isFlowWorkspace;
 }
+function syncConfigPanelWidth(section=activeConfigSection) {
+  if(normalizeConfigSectionKey(section) === 'files') enterFlowWidePanel();
+  else leaveFlowWidePanel();
+}
 function renderConfigLoadingShell(section=activeConfigSection, message='正在加载配置子页…') {
   const pane = document.getElementById('configPane');
   if(!pane || !pane.classList.contains('active')) return;
   const normalized = normalizeConfigSectionKey(section);
   const isFlowWorkspace = setConfigCardView(normalized);
-  enterFlowWidePanel();
+  syncConfigPanelWidth(normalized);
   pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="loading-${normalized}">
     <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(normalized)}</div>
     <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection"><div class="config-loading-card"><strong>${escapeHtml(message)}</strong><span>加载完成后将自动显示；切换页面不会让旧请求覆盖当前界面。</span></div></div>
@@ -5916,7 +5979,7 @@ function renderConfigErrorShell(section=activeConfigSection, error=null) {
   const normalized = normalizeConfigSectionKey(section);
   const isFlowWorkspace = setConfigCardView(normalized);
   const message = String(error?.message || error || '配置内容未能正确加载');
-  enterFlowWidePanel();
+  syncConfigPanelWidth(normalized);
   pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="error-${normalized}">
     <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(normalized)}</div>
     <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection"><div class="config-loading-card notice-box"><strong>配置界面加载失败</strong><span>${escapeHtml(message)}</span><button type="button" id="configRetryLoadBtn" data-control-id="configRetryLoadBtn">重新加载</button></div></div>
@@ -5955,7 +6018,7 @@ function renderConfigPane(section=activeConfigSection) {
     if(!getSelectedProfile() && configProfiles.length) selectedConfigId = configProfiles[0].id;
     const selected = getSelectedProfile();
     setConfigCardView(activeConfigSection);
-    enterFlowWidePanel();
+    syncConfigPanelWidth(activeConfigSection);
     const sectionHtml = renderConfigSection(activeConfigSection, selected);
     pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="${activeConfigSection}">
       <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(activeConfigSection)}</div>
@@ -6384,6 +6447,30 @@ function renderConfigScannerSection() {
           </div>
           <div class="engineering-actions">${engineeringButton('设置ROI','配置/扫码器：设置ROI','ok-lite')}${engineeringButton('读取条码','配置/扫码器：读取条码','primary-lite')}${engineeringButton('读取固件信息','配置/扫码器：读取固件信息')}</div>
           <div class="engineering-mini-grid"><label>条码读取结果<input id="scannerBarcodeReadInput" data-control-id="scannerBarcodeReadInput" placeholder="请输入内容"></label><label>固件信息<input id="scannerFirmwareInfoInput" data-control-id="scannerFirmwareInfoInput" placeholder="请输入内容"></label></div>
+        </section>
+      </div>
+    </div>
+  </section>`;
+}
+function renderConfigArmSection() {
+  return `<section class="config-pane-section ${activeConfigSection==='arm'?'active':''}" id="configSectionArm" data-control-id="configSectionArm">
+    <div class="engineering-config-module scanner-layout-module">
+      <div class="engineering-status-strip"><span class="engineering-status-dot ok"></span><strong>机械臂配置</strong><span class="subtle">机械臂主体通讯参数，当前仅做前端模拟反馈，不调用后端接口。</span></div>
+      <div class="config-arm-layout">
+        <section class="engineering-card wide" id="armComCard" data-control-id="armComCard">
+          <strong>COM 口设置</strong>
+          <div class="engineering-mini-grid four">
+            ${configSelect('armComPortSelect','COM口',['COM1','COM2','COM3','COM4'],'COM1')}
+            ${configSelect('armBaudRateSelect','波特率',['115200','57600','38400','9600'],'115200')}
+            ${configTextInput('armSerialPresetInput','串口参数','8 bits / 1 bits / 无','')}
+            ${configTextInput('armComStatusInput','通讯状态','待配置 / 模拟','')}
+          </div>
+          <div class="engineering-actions">${engineeringButton('设置COM口','config/arm:set-com','primary-lite')}${engineeringButton('读取COM口','config/arm:read-com')}${engineeringButton('重启通讯','config/arm:restart-com','warn-lite')}</div>
+          <div class="engineering-note">参数选项与扫码器 COM 设置保持一致；后续可按控件 ID 对接真实机械臂通讯配置。</div>
+        </section>
+        <section class="engineering-card wide" id="armComConsoleCard" data-control-id="armComConsoleCard">
+          <strong>通讯反馈</strong>
+          <div class="test-console config-console-large" id="armComConsole" data-control-id="armComConsole">[SIM] 机械臂主体 COM 通讯未连接。\n[SIM] 点击“设置COM口 / 读取COM口 / 重启通讯”仅更新前端状态与日志。</div>
         </section>
       </div>
     </div>
@@ -7040,10 +7127,83 @@ async function loadPipetteHoleOptions() {
   } catch(e) { /* 拉取失败时回退到本地占位选项，免得下拉为空 */ try { sel.innerHTML = configHoleOptions(sel.value || 'P11'); } catch(_){} }
 }
 
+function bindArmMainDetailControls(root=document) {
+  root.querySelectorAll('[data-arm-main-action]').forEach(btn => {
+    if(btn.dataset.armMainBound === 'true') return;
+    btn.dataset.armMainBound = 'true';
+    btn.addEventListener('click', () => {
+      flashControl(btn);
+      const action = btn.getAttribute('data-arm-main-action') || '';
+      const portEl = document.getElementById('svg-arm-main-com');
+      const baudEl = document.getElementById('svg-arm-main-baud');
+      const serialEl = document.getElementById('svg-arm-main-serial');
+      const statusEl = document.getElementById('svg-arm-main-status');
+      const consoleNode = document.getElementById('svg-arm-main-console');
+      const current = {
+        port: portEl?.value || 'COM1',
+        baud: baudEl?.value || '115200',
+        serial: serialEl?.value || '8 bits / 1 bits / 无'
+      };
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem('digitalTwinArmComConfig') || 'null'); } catch(e) { saved = null; }
+      const stamp = new Date().toLocaleTimeString();
+      let message = '';
+      if(action === 'set-com') {
+        try { localStorage.setItem('digitalTwinArmComConfig', JSON.stringify(current)); } catch(e) {}
+        if(statusEl) statusEl.value = `已设置 / ${current.port} @ ${current.baud}`;
+        message = `设置机械臂 COM：${current.port} @ ${current.baud}，${current.serial}`;
+      } else if(action === 'read-com') {
+        const cfg = saved || current;
+        if(portEl) portEl.value = cfg.port || 'COM1';
+        if(baudEl) baudEl.value = cfg.baud || '115200';
+        if(serialEl) serialEl.value = cfg.serial || '8 bits / 1 bits / 无';
+        if(statusEl) statusEl.value = `已读取 / ${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}`;
+        message = `读取机械臂 COM：${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}，${cfg.serial || '8 bits / 1 bits / 无'}`;
+      } else if(action === 'restart-com') {
+        if(statusEl) statusEl.value = `重启完成 / ${current.port} @ ${current.baud}`;
+        message = `机械臂通讯已重启（模拟）：${current.port} @ ${current.baud}`;
+      }
+      if(consoleNode && message) consoleNode.textContent += `\n[${stamp}] ${message}`;
+      if(message) log(message, 'ok');
+    });
+  });
+}
+
+function handleArmComAction(action) {
+  const port = document.getElementById('armComPortSelect')?.value || 'COM1';
+  const baud = document.getElementById('armBaudRateSelect')?.value || '115200';
+  const serial = document.getElementById('armSerialPresetInput')?.value || '8 bits / 1 bits / 无';
+  const status = document.getElementById('armComStatusInput');
+  const consoleNode = document.getElementById('armComConsole');
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('digitalTwinArmComConfig') || 'null'); } catch(e) { saved = null; }
+  const stamp = new Date().toLocaleTimeString();
+  let message = '';
+  if(action === 'config/arm:set-com') {
+    try { localStorage.setItem('digitalTwinArmComConfig', JSON.stringify({ port, baud, serial })); } catch(e) {}
+    if(status) status.value = `已设置 / ${port} @ ${baud}`;
+    message = `设置机械臂 COM：${port} @ ${baud}，${serial}`;
+  } else if(action === 'config/arm:read-com') {
+    const cfg = saved || { port, baud, serial };
+    const setValue = (id, value) => { const el = document.getElementById(id); if(el) el.value = value; };
+    setValue('armComPortSelect', cfg.port || 'COM1');
+    setValue('armBaudRateSelect', cfg.baud || '115200');
+    setValue('armSerialPresetInput', cfg.serial || '8 bits / 1 bits / 无');
+    if(status) status.value = `已读取 / ${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}`;
+    message = `读取机械臂 COM：${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}，${cfg.serial || '8 bits / 1 bits / 无'}`;
+  } else if(action === 'config/arm:restart-com') {
+    if(status) status.value = `重启完成 / ${port} @ ${baud}`;
+    message = `机械臂通讯已重启（模拟）：${port} @ ${baud}`;
+  }
+  if(consoleNode && message) consoleNode.textContent += `\n[${stamp}] ${message}`;
+  if(message) log(message, 'ok');
+}
+
 async function dispatchEngineeringAction(action, btn) {
   if(btn) flashControl(btn);
   const consoleNode = document.querySelector('.test-console');
   try {
+    if(String(action || '').startsWith('config/arm:')) { handleArmComAction(action); return; }
     if(action === '配置/清洗混匀：开始混匀' || action === '配置/清洗混匀：混匀复位') {
       const drawer = drawerFromChannelSelect('thermalMixChannelSelect');
       if(!drawer) { log('请先在"通道选择"选择具体通道（1-4）再操作混匀', 'warn'); return; }
@@ -7281,7 +7441,7 @@ function bindConfigNavHandlers(root=document) {
     btn.dataset.configNavBound = 'true';
     btn.addEventListener('click', () => {
       activeConfigSection = normalizeConfigSectionKey(btn.dataset.configSection);
-      enterFlowWidePanel();
+      syncConfigPanelWidth(activeConfigSection);
       scheduleConfigPaneRender(activeConfigSection);
     });
   });
