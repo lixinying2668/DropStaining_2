@@ -355,12 +355,18 @@ public sealed class MockBackendEndToEndAcceptanceTests
             builder.UseSetting("Device:StartupInitialization:Enabled", "false");
             builder.UseSetting("ConnectionStrings:StainerDatabase", $"Data Source={databasePath}");
             builder.UseSetting("MachineExecutor:LeasePath", leasePath);
+            builder.UseSetting("MachineExecutor:StepVisibleDelayMilliseconds", "0");
+            builder.UseSetting("Motion:PipetteAspirateVisibleMilliseconds", "0");
+            builder.UseSetting("Motion:PipetteWashVisibleMilliseconds", "0");
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Device:Mode"] = DeviceModes.Mock,
                 ["Device:StartupInitialization:Enabled"] = "false",
                 ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
-                ["MachineExecutor:LeasePath"] = leasePath
+                ["MachineExecutor:LeasePath"] = leasePath,
+                ["MachineExecutor:StepVisibleDelayMilliseconds"] = "0",
+                ["Motion:PipetteAspirateVisibleMilliseconds"] = "0",
+                ["Motion:PipetteWashVisibleMilliseconds"] = "0"
             }));
         });
     }

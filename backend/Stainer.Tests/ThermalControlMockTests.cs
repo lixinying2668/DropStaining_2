@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Domain.Entities;
@@ -234,6 +235,129 @@ public sealed class ThermalControlMockTests
         Assert.Equal(16, await dbContext.ThermalPointStates.CountAsync());
     }
 
+    [Fact]
+    public async Task Real_mode_cooling_routes_to_main_controller_adapter_and_updates_state()
+    {
+        // fake real 适配器：SetCoolingAsync 成功，返回真实主控回读的状态（deci-C）。
+        var success = new DeviceCommandResult(
+            true,
+            DeviceCommandStatuses.Succeeded,
+            DeviceModules.Cooling,
+            "set-cooling",
+            null,
+            "Cooling applied via main controller.",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            true,
+            new Dictionary<string, object?>
+            {
+                ["currentTemperatureDeciC"] = 90,
+                ["targetTemperatureDeciC"] = 80,
+                ["isEnabled"] = true,
+                ["isConnected"] = true
+            });
+        var context = CreateFactory(deviceMode: DeviceModes.Real, deviceAdapterOverride: new FakeRealCoolingDeviceAdapter(success));
+        await using var factory = context.Factory;
+        using var client = factory.CreateClient();
+        await LoginAsync(client);
+
+        var set = await PostAsync<ThermalMutationResponse>(client, "/api/thermal/cooling", new
+        {
+            commandId = "cmd-real-cooling-set-80",
+            targetTemperatureDeciC = 80,
+            isEnabled = true
+        });
+
+        // 不再返回 thermal_mock_not_available：响应 OK，状态来自真实主控适配器回读。
+        Assert.True(set.Ok);
+        Assert.Equal(80, set.State.Cooling.TargetTemperatureDeciC);
+        Assert.Equal(90, set.State.Cooling.CurrentTemperatureDeciC);
+        Assert.True(set.State.Cooling.IsEnabled);
+
+        var telemetry = await client.GetFromJsonAsync<List<TemperatureTelemetryResponse>>("/api/thermal/telemetry?take=1000");
+        Assert.Contains(telemetry!, x => x.SourceType == ThermalTelemetrySourceTypes.Cooling && x.TargetTemperatureDeciC == 80);
+        var publisher = factory.Services.GetRequiredService<InMemoryRuntimeEventPublisher>();
+        Assert.Contains(publisher.Snapshot(), x => x.Type == MachineEventTypes.CoolingChanged);
+    }
+
+    [Fact]
+    public async Task Real_mode_cooling_fails_closed_when_main_controller_adapter_fails()
+    {
+        var failure = new DeviceCommandResult(
+            false,
+            DeviceCommandStatuses.Failed,
+            DeviceModules.Cooling,
+            "set-cooling",
+            "cooling_command_failed",
+            "Main controller rejected the cooling command.",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            false,
+            new Dictionary<string, object?>());
+        var context = CreateFactory(deviceMode: DeviceModes.Real, deviceAdapterOverride: new FakeRealCoolingDeviceAdapter(failure));
+        await using var factory = context.Factory;
+        using var client = factory.CreateClient();
+        await LoginAsync(client);
+
+        var response = await client.PostAsJsonAsync("/api/thermal/cooling", new
+        {
+            commandId = "cmd-real-cooling-fail",
+            targetTemperatureDeciC = 80,
+            isEnabled = true
+        });
+
+        // fail closed：不再返回 thermal_mock_not_available，而是返回真实适配器错误（409）。
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("cooling_command_failed", await response.Content.ReadAsStringAsync());
+    }
+
+    // 最小 fake：Mode=Real，仅 SetCoolingAsync 返回预设结果；其余方法 NotSupported。不实现 IRealDeviceReadAdapter，
+    // 故 ThermalControlService.GetStateAsync 的 Real 刷新路径会安全跳过（无串口依赖）。
+    private sealed class FakeRealCoolingDeviceAdapter(DeviceCommandResult coolingResult) : IDeviceAdapter
+    {
+        public string Mode => DeviceModes.Real;
+        public string Name => nameof(FakeRealCoolingDeviceAdapter);
+
+        public Task<DeviceStatusSnapshot> GetStatusAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeviceStatusSnapshot(Mode, Name, true, 1, DateTimeOffset.UtcNow, [], []));
+
+        public Task<DeviceCommandResult> SetCoolingAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(coolingResult);
+
+        public Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ScanSampleAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> QueryLisAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> SetTemperatureAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> RunPumpAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ReadLiquidLevelsAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> MixAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> MoveRobotAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> OperateNeedlesAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> PipetteAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> WashNeedlesAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> PrepareDabAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ExecuteWorkflowActionAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceFaultControlResult> ConfigureFaultAsync(DeviceFaultCommand c, CancellationToken ct = default) =>
+            FaultControl();
+        public Task<DeviceFaultControlResult> ClearFaultsAsync(DeviceFaultClearCommand c, CancellationToken ct = default) =>
+            FaultControl();
+
+        private static Task<DeviceCommandResult> Reject(DeviceOperationRequest request)
+        {
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult(new DeviceCommandResult(
+                false, DeviceCommandStatuses.NotSupported, request.ModuleCode, request.Action,
+                "not_supported", "Not supported by fake real cooling adapter.", now, now, false,
+                new Dictionary<string, object?>()));
+        }
+
+        private static async Task<DeviceFaultControlResult> FaultControl() =>
+            new(false, "Not supported by fake real cooling adapter.", await Task.FromResult(new DeviceStatusSnapshot(
+                DeviceModes.Real, nameof(FakeRealCoolingDeviceAdapter), false, 0, DateTimeOffset.UtcNow, [], [])));
+    }
+
     private static async Task<ThermalStateResponse> WaitForStateAsync(HttpClient client, Func<ThermalStateResponse, bool> predicate)
     {
         for (var i = 0; i < 40; i++)
@@ -247,7 +371,7 @@ public sealed class ThermalControlMockTests
         throw new UnreachableException();
     }
 
-    private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock)
+    private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock, IDeviceAdapter? deviceAdapterOverride = null)
     {
         databasePath ??= Path.Combine(TestPaths.TempRoot, "stainer-thermal-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
@@ -264,6 +388,10 @@ public sealed class ThermalControlMockTests
                 ["Device:HardwareAvailable"] = deviceMode == DeviceModes.Real ? "true" : "false",
                 ["Device:StartupInitialization:Enabled"] = "false"
             }));
+            if (deviceAdapterOverride is not null)
+            {
+                builder.ConfigureServices(services => services.AddSingleton(deviceAdapterOverride));
+            }
         });
         return new FactoryContext(factory, databasePath);
     }

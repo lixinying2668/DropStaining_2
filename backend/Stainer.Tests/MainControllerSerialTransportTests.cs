@@ -588,6 +588,111 @@ public sealed class MainControllerSerialTransportTests
         Assert.False(port.OpenCalled);
     }
 
+    // ── CLG / MCU-06：制冷（CoolingClass 0x03）白名单 — 只读 0x01~0x03、0x05 空 payload；写入 0x04/0x06 校验 payload ──
+
+    [Theory]
+    [InlineData(MainControllerProtocol.CoolingConnectionStatusSub)]
+    [InlineData(MainControllerProtocol.CoolingCurrentTemperatureSub)]
+    [InlineData(MainControllerProtocol.CoolingTargetTemperatureSub)]
+    [InlineData(MainControllerProtocol.CoolingSwitchStateSub)]
+    public async Task Exchange_allows_cooling_read_commands_with_empty_payload(byte subClass)
+    {
+        var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.CoolingClass,
+            subClass,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01, 0x01, 0x00]);
+        var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        var transport = CreateTransport(port);
+
+        var requestBytes = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.CoolingClass, subClass);
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-cooling",
+                requestBytes));
+
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+        Assert.True(port.OpenCalled);
+        Assert.Single(port.WriteCalls);
+    }
+
+    [Fact]
+    public async Task Exchange_allows_cooling_target_write_with_valid_payload()
+    {
+        var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.CoolingClass,
+            MainControllerProtocol.CoolingSetTargetTemperatureSub,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01]);
+        var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        var transport = CreateTransport(port);
+
+        var request = MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(10); // 0A 00
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "set-cooling-target",
+                request));
+
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+        Assert.True(port.OpenCalled);
+        // 实际线上字节 payload 必须是 0A 00（10℃），不是 0A 单字节或 64 00。
+        var written = IceImmunoSerialProtocol.DecodeFrame(port.WrittenBytes);
+        Assert.Equal<byte>([0x0A, 0x00], written.Payload);
+    }
+
+    [Fact]
+    public async Task Exchange_allows_cooling_switch_write_with_valid_zero_or_one_payload()
+    {
+        foreach (var enabled in new[] { true, false })
+        {
+            var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+                MainControllerProtocol.CoolingClass,
+                MainControllerProtocol.CoolingSetSwitchStateSub,
+                IceImmunoSerialProtocol.ResponseType,
+                [0x01]);
+            var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+            var transport = CreateTransport(port);
+
+            var request = MainControllerProtocol.BuildSetCoolingSwitchStateRequest(enabled);
+            var result = await transport.ExchangeAsync(
+                new DeviceByteTransportRequest(
+                    DeviceByteTransportEndpoints.MainController,
+                    "set-cooling-switch",
+                    request));
+
+            Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+            Assert.True(port.OpenCalled);
+        }
+    }
+
+    [Theory]
+    [InlineData(MainControllerProtocol.CoolingSetTargetTemperatureSub, new byte[] { 0x29, 0x00 })] // 目标 41℃ 超量程
+    [InlineData(MainControllerProtocol.CoolingSetTargetTemperatureSub, new byte[] { 0x0A })]        // payload 长度错
+    [InlineData(MainControllerProtocol.CoolingSetSwitchStateSub, new byte[] { 0x02, 0x00 })]       // 开关值 2 非法
+    [InlineData(MainControllerProtocol.CoolingSetSwitchStateSub, new byte[] { 0x01 })]              // payload 长度错
+    [InlineData((byte)0x07, new byte[] { })]                                                        // 未知制冷子命令 0x03/0x07
+    public async Task Exchange_rejects_invalid_or_unapproved_cooling_commands_without_opening_port(
+        byte subClass,
+        byte[] payload)
+    {
+        var port = FakeMainControllerSerialPort.Empty();
+        var transport = CreateTransport(port);
+
+        var requestBytes = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.CoolingClass, subClass, payload);
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "cooling-command",
+                requestBytes));
+
+        Assert.Equal(DeviceByteTransportStatuses.Failed, result.Status);
+        Assert.Equal("main_controller_command_not_supported", result.ErrorCode);
+        Assert.False(port.OpenCalled);
+        Assert.Empty(port.WriteCalls);
+    }
+
     [Theory]
     [InlineData(0x04, 0x01, new byte[] { 0x00 })]
     [InlineData(0x04, 0x08, new byte[] { 0x00 })]

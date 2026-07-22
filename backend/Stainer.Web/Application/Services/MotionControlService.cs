@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Stainer.Web.Application.Devices;
 using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
@@ -9,12 +11,24 @@ namespace Stainer.Web.Application.Services;
 
 public sealed class MotionControlService(
     StainerDbContext dbContext,
-    DeviceModeService deviceModeService)
+    DeviceModeService deviceModeService,
+    IConfiguration configuration,
+    IHostEnvironment environment)
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private const int PipetteAspirateVisibleMs = 700;
-    private const int PipetteWashVisibleMs = 600;
+    private const int DefaultPipetteAspirateVisibleMs = 700;
+    private const int DefaultPipetteWashVisibleMs = 600;
+    private readonly int pipetteAspirateVisibleMs = ResolveVisibleDelay(
+        configuration,
+        environment,
+        "Motion:PipetteAspirateVisibleMilliseconds",
+        DefaultPipetteAspirateVisibleMs);
+    private readonly int pipetteWashVisibleMs = ResolveVisibleDelay(
+        configuration,
+        environment,
+        "Motion:PipetteWashVisibleMilliseconds",
+        DefaultPipetteWashVisibleMs);
     private const long MinXUm = -100_000;
     private const long MaxXUm = 600_000;
     private const long MinYUm = -100_000;
@@ -272,7 +286,10 @@ public sealed class MotionControlService(
                 arm.CurrentZUm = washPoint.SafeZUm ?? washPoint.CalibratedZUm;
                 ApplyContext(arm, request);
                 await dbContext.SaveChangesAsync(cancellationToken);
-                await Task.Delay(PipetteWashVisibleMs, cancellationToken);
+                if (pipetteWashVisibleMs > 0)
+                {
+                    await Task.Delay(pipetteWashVisibleMs, cancellationToken);
+                }
             }
 
             // 吸液阶段：先把机械臂移到「该步骤对应试剂」源位并持久化一次，使"在试剂位吸液"成为可观测的中间状态（而非直接跳到玻片）。
@@ -284,7 +301,10 @@ public sealed class MotionControlService(
             arm.CoordinateProfileVersionId = snapshot.CoordinateProfileVersionId;
             ApplyContext(arm, request);
             await dbContext.SaveChangesAsync(cancellationToken);
-            await Task.Delay(PipetteAspirateVisibleMs, cancellationToken); // 让“在试剂源位吸液”过程可见（不是一闪而过）
+            if (pipetteAspirateVisibleMs > 0)
+            {
+                await Task.Delay(pipetteAspirateVisibleMs, cancellationToken); // 让“在试剂源位吸液”过程可见（不是一闪而过）
+            }
 
             var secondaryTarget = Convert.ToString(request.Parameters.GetValueOrDefault("secondaryTargetPointCode"));
             AddOperation(PipettingOperationTypes.LiquidDetect, DeviceCommandStatus.Completed, request, needle.NeedleCode, executionMode, source.SourcePositionCode, null, source.SourceType, reagentCode, source.ReagentBottleId, source.DabBatchId, source.SystemLiquidSourceType, source.SourcePositionCode, volume);
@@ -813,6 +833,17 @@ public sealed class MotionControlService(
         _ = RequireFrozenTarget(snapshot, primaryTarget);
         _ = RequireFrozenTarget(snapshot, secondary);
         return PipettingExecutionModes.Sequential;
+    }
+
+    private static int ResolveVisibleDelay(IConfiguration configuration, IHostEnvironment environment, string key, int defaultValue)
+    {
+        var configured = configuration[key];
+        if (int.TryParse(configured, out var value))
+        {
+            return Math.Max(0, value);
+        }
+
+        return environment.IsEnvironment("Testing") ? 0 : defaultValue;
     }
 
     private static MotionModuleState BuildModuleState(string moduleCode, bool ready, bool disconnected, string? errorCode, string? errorMessage, object data) => new(

@@ -379,7 +379,10 @@ public sealed class FluidicsControlMockTests
             ["Safety:LogDirectory"] = Path.Combine(root, "logs"),
             ["Device:Mode"] = deviceMode,
             ["Device:HardwareAvailable"] = deviceMode == DeviceModes.Real ? "true" : "false",
-            ["Device:StartupInitialization:Enabled"] = "false"
+            ["Device:StartupInitialization:Enabled"] = "false",
+            ["MachineExecutor:StepVisibleDelayMilliseconds"] = "0",
+            ["Motion:PipetteAspirateVisibleMilliseconds"] = "0",
+            ["Motion:PipetteWashVisibleMilliseconds"] = "0"
         };
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

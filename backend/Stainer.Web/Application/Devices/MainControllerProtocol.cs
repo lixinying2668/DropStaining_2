@@ -7,11 +7,21 @@ namespace Stainer.Web.Application.Devices;
 public static class MainControllerProtocol
 {
     public const byte SystemClass = 0x01;
+    public const byte CoolingClass = 0x03;
     public const byte HeatingClass = 0x04;
     public const byte OptocouplerClass = 0x05;
     public const byte PwmClass = 0x07;
     public const byte QrClass = 0x08;
     public const byte MixerClass = 0x0A;
+
+    // 制冷（Cooling）子命令字 —— 父类 0x03，由主控统一处理（冰免通讯协议 ver1.0.6）。
+    // 注意：协议温度单位是“整摄氏度”UINT16，与 DB/API 的 deci-C 不同，转换在适配层完成。
+    public const byte CoolingConnectionStatusSub = 0x01;   // TL_COOL_GET_MODULE_CONNECT
+    public const byte CoolingCurrentTemperatureSub = 0x02; // TL_COOL_GET_TEMP_CURRENT  (0..100 ℃)
+    public const byte CoolingTargetTemperatureSub = 0x03;  // TL_COOL_GET_TEMP_TARGET   (0..40 ℃)
+    public const byte CoolingSetTargetTemperatureSub = 0x04; // TL_COOL_SET_TEMP_TARGET (0..40 ℃)
+    public const byte CoolingSwitchStateSub = 0x05;        // TL_COOL_GET_SWITCH_STATUS (0/1)
+    public const byte CoolingSetSwitchStateSub = 0x06;     // TL_COOL_SET_SWITCH_STATUS (0/1)
 
     public static byte[] BuildWorkStatusRequest() => Build(SystemClass, 0x08);
     public static byte[] BuildNodeStatusRequest() => Build(SystemClass, 0x09);
@@ -24,6 +34,32 @@ public static class MainControllerProtocol
     public static byte[] BuildMixerRemainingCountRequest(byte boardId) => BuildBoardRequest(MixerClass, 0x03, boardId);
     public static byte[] BuildQrScanStatusRequest() => Build(QrClass, 0x06);
     public static byte[] BuildQrTextRequest() => Build(QrClass, 0x01);
+
+    // 制冷只读请求：父类 0x03，无 payload（请求帧 payload 为空）。
+    public static byte[] BuildCoolingConnectionStatusRequest() => Build(CoolingClass, CoolingConnectionStatusSub);
+    public static byte[] BuildCoolingCurrentTemperatureRequest() => Build(CoolingClass, CoolingCurrentTemperatureSub);
+    public static byte[] BuildCoolingTargetTemperatureRequest() => Build(CoolingClass, CoolingTargetTemperatureSub);
+    public static byte[] BuildCoolingSwitchStateRequest() => Build(CoolingClass, CoolingSwitchStateSub);
+
+    // 制冷写入请求：payload 为 2 字节 UINT16 little-endian。构造期即校验协议量程，避免把非法值打到线上。
+    public static byte[] BuildSetCoolingTargetTemperatureRequest(ushort targetCelsius)
+    {
+        if (targetCelsius > 40)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetCelsius), "Cooling target temperature must be 0..40 Celsius.");
+        }
+
+        var payload = new byte[2];
+        BinaryPrimitives.WriteUInt16LittleEndian(payload, targetCelsius);
+        return IceImmunoSerialProtocol.BuildRequestFrame(CoolingClass, CoolingSetTargetTemperatureSub, payload);
+    }
+
+    public static byte[] BuildSetCoolingSwitchStateRequest(bool enabled)
+    {
+        var payload = new byte[2];
+        BinaryPrimitives.WriteUInt16LittleEndian(payload, enabled ? (ushort)1 : (ushort)0);
+        return IceImmunoSerialProtocol.BuildRequestFrame(CoolingClass, CoolingSetSwitchStateSub, payload);
+    }
 
     public static MainControllerAck ParseAck(IceImmunoFrame frame)
     {
@@ -129,6 +165,60 @@ public static class MainControllerProtocol
             Encoding.ASCII.GetString(frame.Payload),
             isPutReport ? MainControllerQrTextSource.PutReport : MainControllerQrTextSource.PullResponse);
     }
+
+    // 制冷响应解析：响应帧 payload = [0x01 成功 ack, UINT16_LO, UINT16_HI]（setter ack 仅 [0x01]，无业务数据）。
+    // EnsureSuccessResponse 会校验 parent/sub/MessageType=Response/ack=0x01/payload 长度，这里再约束协议量程与枚举值。
+    public static MainControllerCoolingConnectionStatus ParseCoolingConnectionStatus(IceImmunoFrame frame)
+    {
+        var data = EnsureSuccessResponse(frame, CoolingClass, CoolingConnectionStatusSub, 2);
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(data);
+        if (value != 0 && value != 1)
+        {
+            throw Error(IceImmunoProtocolError.InvalidPayload, "Cooling module connection status must be 0 (disconnected) or 1 (connected).");
+        }
+
+        return new MainControllerCoolingConnectionStatus(value == 1);
+    }
+
+    public static MainControllerCoolingTemperature ParseCoolingCurrentTemperature(IceImmunoFrame frame)
+    {
+        var data = EnsureSuccessResponse(frame, CoolingClass, CoolingCurrentTemperatureSub, 2);
+        var celsius = BinaryPrimitives.ReadUInt16LittleEndian(data);
+        if (celsius > 100)
+        {
+            throw Error(IceImmunoProtocolError.InvalidPayload, "Cooling current temperature must be 0..100 Celsius.");
+        }
+
+        return new MainControllerCoolingTemperature((int)celsius, IsCurrent: true);
+    }
+
+    public static MainControllerCoolingTemperature ParseCoolingTargetTemperature(IceImmunoFrame frame)
+    {
+        var data = EnsureSuccessResponse(frame, CoolingClass, CoolingTargetTemperatureSub, 2);
+        var celsius = BinaryPrimitives.ReadUInt16LittleEndian(data);
+        if (celsius > 40)
+        {
+            throw Error(IceImmunoProtocolError.InvalidPayload, "Cooling target temperature must be 0..40 Celsius.");
+        }
+
+        return new MainControllerCoolingTemperature((int)celsius, IsCurrent: false);
+    }
+
+    public static MainControllerCoolingSwitchState ParseCoolingSwitchState(IceImmunoFrame frame)
+    {
+        var data = EnsureSuccessResponse(frame, CoolingClass, CoolingSwitchStateSub, 2);
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(data);
+        if (value != 0 && value != 1)
+        {
+            throw Error(IceImmunoProtocolError.InvalidPayload, "Cooling switch status must be 0 (off) or 1 (on).");
+        }
+
+        return new MainControllerCoolingSwitchState(value == 1);
+    }
+
+    // 制冷 setter 成功 ack：parent=0x03/sub=messageType=Response，payload 恰为 [0x01]（成功 ack，无业务数据）。
+    public static void ParseCoolingAck(IceImmunoFrame frame, byte subClass) =>
+        EnsureSuccessResponse(frame, CoolingClass, subClass, 0);
 
     private static byte[] Build(byte parentClass, byte subClass) =>
         IceImmunoSerialProtocol.BuildRequestFrame(parentClass, subClass);
@@ -237,6 +327,11 @@ public sealed record MainControllerPwmSpeeds(ushort[] ValuesRpm);
 public sealed record MainControllerMixerValue(byte BoardId, ushort Value, MainControllerMixerValueKind Kind);
 public sealed record MainControllerQrScanStatus(ushort Value);
 public sealed record MainControllerQrText(string Text, MainControllerQrTextSource Source);
+
+// 制冷（主控 0x03）只读解析结果。Celsius 为协议“整摄氏度”，到 deci-C 的 ×10 转换在适配层完成。
+public sealed record MainControllerCoolingConnectionStatus(bool IsConnected);
+public sealed record MainControllerCoolingTemperature(int Celsius, bool IsCurrent);
+public sealed record MainControllerCoolingSwitchState(bool IsEnabled);
 
 public enum MainControllerMixerValueKind
 {

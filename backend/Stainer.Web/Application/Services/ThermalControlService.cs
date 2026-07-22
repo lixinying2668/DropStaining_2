@@ -27,9 +27,19 @@ public sealed class ThermalControlService(
         try
         {
             await EnsureSeededCoreAsync(cancellationToken);
-            if (advance)
+            if (string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
             {
-                await AdvanceAllCoreAsync(cancellationToken);
+                // Mock 模式：推进温度模拟。
+                if (advance)
+                {
+                    await AdvanceAllCoreAsync(cancellationToken);
+                }
+            }
+            else if (advance)
+            {
+                // Real 模式：绝不推进模拟温度。UI 查询（advance=true）时读取主控实时制冷状态刷新 CoolingUnitState；
+                // advance=false 的快照/诊断轮询不复读主控，避免高频刷串口。读取失败按 fail-closed 标记 fault，不伪造温度。
+                await RefreshCoolingFromMainControllerCoreAsync(cancellationToken);
             }
 
             return await BuildResponseAsync(cancellationToken);
@@ -38,6 +48,42 @@ public sealed class ThermalControlService(
         {
             Gate.Release();
         }
+    }
+
+    // Real 模式下用主控 0x03 只读结果刷新 CoolingUnitState；失败则标记 fault，不静默伪造模拟温度。
+    private async Task RefreshCoolingFromMainControllerCoreAsync(CancellationToken cancellationToken)
+    {
+        if (deviceAdapter is not IRealDeviceReadAdapter realRead)
+        {
+            return;
+        }
+
+        var snapshot = await realRead.ReadCoolingSnapshotAsync(cancellationToken);
+        var cooling = await dbContext.CoolingUnitStates.SingleAsync(x => x.Id == CoolingUnitState.SingletonId, cancellationToken);
+        if (!snapshot.Ok)
+        {
+            cooling.FaultCode = "cooling_read_failed";
+            cooling.FaultMessage = snapshot.Message;
+            cooling.Status = ThermalStatuses.Unknown;
+            cooling.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            AddCoolingTelemetry(cooling);
+            PublishCooling(cooling, null, "realReadFailed");
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var value = snapshot.Value!;
+        cooling.CurrentTemperatureDeciC = value.CurrentTemperatureDeciC;
+        cooling.TargetTemperatureDeciC = value.TargetTemperatureDeciC;
+        cooling.IsEnabled = value.IsEnabled;
+        cooling.IsConnected = value.IsConnected;
+        cooling.FaultCode = null;
+        cooling.FaultMessage = null;
+        cooling.Status = NextStatus(cooling.CurrentTemperatureDeciC, cooling.TargetTemperatureDeciC, cooling.IsEnabled, true);
+        cooling.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        AddCoolingTelemetry(cooling);
+        PublishCooling(cooling, null, "realRead");
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public Task<ThermalMutationResponse> SetPointAsync(
@@ -138,7 +184,13 @@ public sealed class ThermalControlService(
             actor,
             async () =>
             {
-                EnsureMockMode();
+                // Real 模式：制冷由主控处理，走 IDeviceAdapter.SetCoolingAsync（主控 0x03/0x04、0x03/0x06），fail closed 不回退 Mock。
+                if (!string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
+                {
+                    return await SetCoolingViaMainControllerAsync(request, actor, cancellationToken);
+                }
+
+                // Mock 模式：保留现有模拟逻辑
                 await Gate.WaitAsync(cancellationToken);
                 try
                 {
@@ -164,6 +216,91 @@ public sealed class ThermalControlService(
                 }
             },
             cancellationToken);
+    }
+
+    // Real 模式制冷下发：调用主控适配器写入目标温度与开关，然后用真实回读结果刷新 CoolingUnitState / telemetry / event。
+    // 适配器内部已 fail closed（任一步失败即返回 Ok=false）；此处再把失败转成 BusinessRuleException，绝不伪造成功状态。
+    private async Task<CommandExecutionResult<ThermalMutationResponse>> SetCoolingViaMainControllerAsync(
+        SetCoolingRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken)
+    {
+        var deviceRequest = new DeviceOperationRequest(
+            new DeviceCommandContext(request.CommandId, null, actor.UserId, "ThermalControlService"),
+            Application.Devices.DeviceModules.Cooling,
+            "set-cooling",
+            new Dictionary<string, object?>
+            {
+                ["targetTemperatureDeciC"] = request.TargetTemperatureDeciC,
+                ["isEnabled"] = request.IsEnabled
+            });
+
+        var deviceResult = await deviceAdapter.SetCoolingAsync(deviceRequest, cancellationToken);
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+            var cooling = await dbContext.CoolingUnitStates.SingleAsync(x => x.Id == CoolingUnitState.SingletonId, cancellationToken);
+            if (!deviceResult.Ok)
+            {
+                // fail closed：保留旧状态，记录 fault 与审计，向前端返回明确错误（409）。
+                cooling.FaultCode = deviceResult.ErrorCode ?? "cooling_command_failed";
+                cooling.FaultMessage = deviceResult.Message;
+                cooling.Status = ThermalStatuses.Unknown;
+                cooling.UpdatedAtUtc = DateTimeOffset.UtcNow;
+                AddCoolingTelemetry(cooling);
+                AddAudit(actor, "thermal.cooling.set", cooling.Id, request.CommandId, new { request.TargetTemperatureDeciC, request.IsEnabled, source = "MainController", ok = false, deviceResult.ErrorCode });
+                PublishCooling(cooling, request.CommandId, "mainControllerFailed");
+                await dbContext.SaveChangesAsync(cancellationToken);
+                throw new BusinessRuleException(
+                    deviceResult.ErrorCode ?? "cooling_command_failed",
+                    deviceResult.Message,
+                    StatusCodes.Status409Conflict);
+            }
+
+            cooling.CurrentTemperatureDeciC = DictionaryInt(deviceResult.Data, "currentTemperatureDeciC", cooling.CurrentTemperatureDeciC);
+            cooling.TargetTemperatureDeciC = DictionaryInt(deviceResult.Data, "targetTemperatureDeciC", request.TargetTemperatureDeciC);
+            cooling.IsEnabled = DictionaryBool(deviceResult.Data, "isEnabled", request.IsEnabled);
+            cooling.IsConnected = DictionaryBool(deviceResult.Data, "isConnected", cooling.IsConnected);
+            cooling.FaultCode = null;
+            cooling.FaultMessage = null;
+            cooling.Status = NextStatus(cooling.CurrentTemperatureDeciC, cooling.TargetTemperatureDeciC, cooling.IsEnabled, true);
+            cooling.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            AddCoolingTelemetry(cooling);
+            AddAudit(actor, "thermal.cooling.set", cooling.Id, request.CommandId, new { request.TargetTemperatureDeciC, request.IsEnabled, source = "MainController", ok = true });
+            PublishCooling(cooling, request.CommandId, "mainControllerApplied");
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return new CommandExecutionResult<ThermalMutationResponse>(
+                new ThermalMutationResponse(true, request.CommandId, false, "Cooling applied via main controller.", await BuildResponseAsync(cancellationToken)),
+                "CoolingUnitState",
+                cooling.Id);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private static int DictionaryInt(IReadOnlyDictionary<string, object?> data, string key, int fallback)
+    {
+        if (data.TryGetValue(key, out var value) && value is not null)
+        {
+            try { return Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture); }
+            catch { return fallback; }
+        }
+
+        return fallback;
+    }
+
+    private static bool DictionaryBool(IReadOnlyDictionary<string, object?> data, string key, bool fallback)
+    {
+        if (data.TryGetValue(key, out var value) && value is not null)
+        {
+            try { return Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture); }
+            catch { return fallback; }
+        }
+
+        return fallback;
     }
 
     public Task<ThermalMutationResponse> ConfigureFaultAsync(
@@ -294,6 +431,13 @@ public sealed class ThermalControlService(
 
     public async Task<ThermalDeviceResult> InitializeModuleAsync(string moduleCode, CancellationToken cancellationToken = default)
     {
+        // Real 模式制冷初始化：通过主控读取真实连接/温度/开关状态刷新 CoolingUnitState，再判定就绪。
+        if (moduleCode == Application.Devices.DeviceModules.Cooling
+            && !string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
+        {
+            await RefreshCoolingFromMainControllerCoreAsync(cancellationToken);
+        }
+
         var state = await GetStateAsync(false, cancellationToken);
         if (moduleCode == Application.Devices.DeviceModules.Temperature)
         {

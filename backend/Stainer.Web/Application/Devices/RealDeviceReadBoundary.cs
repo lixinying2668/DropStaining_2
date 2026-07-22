@@ -64,8 +64,23 @@ public interface IRealDeviceReadAdapter
     Task<RealDeviceReadResult<MainControllerQrText>> ReadQrTextAsync(CancellationToken cancellationToken = default);
     Dcr55TriggerPreparation PrepareDcr55Trigger(Dcr55TriggerMode mode, byte[]? configuredTerminator);
     Task<RealDeviceReadResult<Dcr55ScanResult>> ReceiveDcr55ResultAsync(CancellationToken cancellationToken = default);
-    Task<RealDeviceReadResult<StandaloneCoolingFrame>> ReadCoolingTemperatureAsync(CancellationToken cancellationToken = default);
+
+    // 制冷读取已统一走主控 0x03，不再使用 StandaloneCooling 通道。
+    // 单项读取返回主控解析模型（整摄氏度）；聚合读取返回 deci-C 快照，供 ThermalControlService / DevicePrecheckService 直接消费。
+    Task<RealDeviceReadResult<MainControllerCoolingConnectionStatus>> ReadCoolingConnectionStatusAsync(CancellationToken cancellationToken = default);
+    Task<RealDeviceReadResult<MainControllerCoolingTemperature>> ReadCoolingCurrentTemperatureAsync(CancellationToken cancellationToken = default);
+    Task<RealDeviceReadResult<MainControllerCoolingTemperature>> ReadCoolingTargetTemperatureAsync(CancellationToken cancellationToken = default);
+    Task<RealDeviceReadResult<MainControllerCoolingSwitchState>> ReadCoolingSwitchStateAsync(CancellationToken cancellationToken = default);
+    Task<RealDeviceReadResult<MainControllerCoolingSnapshot>> ReadCoolingSnapshotAsync(CancellationToken cancellationToken = default);
 }
+
+// 制冷聚合快照：主控 0x03 多条只读命令的合并结果。温度已从协议“整摄氏度”×10 换算为 deci-C。
+// 不含 Status 字符串——协议不返回状态文本，CoolingUnitState.Status 由 ThermalControlService 按 (current,target,enabled) 推导。
+public sealed record MainControllerCoolingSnapshot(
+    bool IsConnected,
+    int CurrentTemperatureDeciC,
+    int TargetTemperatureDeciC,
+    bool IsEnabled);
 
 public sealed record RealDeviceReadResult<T>(
     bool Ok,

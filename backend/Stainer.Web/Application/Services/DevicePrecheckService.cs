@@ -156,7 +156,7 @@ public sealed class DevicePrecheckService(
             {
                 "device.controller.connected" => FromRealRead(definition, await realDeviceReadAdapter.ReadControllerWorkStatusAsync(cancellationToken), checkedAt),
                 "motion.arm.home" => FromRealRead(definition, await realDeviceReadAdapter.ReadControllerNodeStatusesAsync(cancellationToken), checkedAt),
-                "thermal.cooling.connected" => FromRealRead(definition, await realDeviceReadAdapter.ReadCoolingTemperatureAsync(cancellationToken), checkedAt),
+                "thermal.cooling.connected" => FromRealRead(definition, await realDeviceReadAdapter.ReadCoolingSnapshotAsync(cancellationToken), checkedAt),
                 "scanner.sample.online" => FromRealRead(definition, await realDeviceReadAdapter.ReceiveDcr55ResultAsync(cancellationToken), checkedAt),
                 "scanner.reagent.online" => FromRealRead(definition, await realDeviceReadAdapter.ReadQrScanStatusAsync(cancellationToken), checkedAt),
                 "fluidics.level-sensors.readable" => FromRealRead(definition, await realDeviceReadAdapter.ReceiveLiquidLevelStatusAsync(cancellationToken), checkedAt),

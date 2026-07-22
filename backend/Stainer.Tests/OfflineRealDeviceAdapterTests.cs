@@ -162,29 +162,131 @@ public sealed class OfflineRealDeviceAdapterTests
     }
 
     [Fact]
-    public async Task Cooling_boundary_reads_temperature_and_fails_closed_for_invalid_frame_and_timeout()
+    public async Task Cooling_reads_go_through_main_controller_endpoint()
     {
         var fake = new InMemoryFakeDeviceByteTransport();
         var adapter = new UnavailableRealDeviceAdapter(fake);
-        var request = StandaloneCoolingProtocol.BuildReadTemperatureFrame();
-        fake.EnqueueExchange(request, [0xFF, 0x00], [0x05, 0xFA]);
-        fake.EnqueueExchange(request, [0xFF, 0x00, 0x05, 0xFB]);
-        fake.EnqueueExchangeResult(
-            request,
-            new DeviceByteTransportResult(DeviceByteTransportStatuses.TimedOut, [], "cooling_timeout", "Timed out."));
 
-        var temperature = await adapter.ReadCoolingTemperatureAsync();
-        Assert.True(temperature.Ok, temperature.Message);
-        Assert.Equal<byte?>(5, temperature.Value!.TemperatureCelsius);
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingConnectionStatusRequest(), Response(0x03, 0x01, [0x01, 0x01, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingCurrentTemperatureRequest(), Response(0x03, 0x02, [0x01, 0x08, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingTargetTemperatureRequest(), Response(0x03, 0x03, [0x01, 0x0A, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingSwitchStateRequest(), Response(0x03, 0x05, [0x01, 0x01, 0x00]));
 
-        var invalid = await adapter.ReadCoolingTemperatureAsync();
-        Assert.False(invalid.Ok);
-        Assert.Equal("cooling_invalid_response", invalid.ErrorCode);
+        Assert.True((await adapter.ReadCoolingConnectionStatusAsync()).Value!.IsConnected);
+        Assert.Equal(8, (await adapter.ReadCoolingCurrentTemperatureAsync()).Value!.Celsius);
+        Assert.Equal(10, (await adapter.ReadCoolingTargetTemperatureAsync()).Value!.Celsius);
+        Assert.True((await adapter.ReadCoolingSwitchStateAsync()).Value!.IsEnabled);
 
-        var timeout = await adapter.ReadCoolingTemperatureAsync();
-        Assert.False(timeout.Ok);
-        Assert.Equal(DeviceCommandStatuses.TimedOut, timeout.Status);
+        Assert.Equal(4, fake.ExchangeRequests.Count);
+        Assert.All(fake.ExchangeRequests, request => Assert.Equal(DeviceByteTransportEndpoints.MainController, request.Endpoint));
     }
+
+    [Fact]
+    public async Task Cooling_snapshot_aggregates_four_reads_and_fails_closed_on_invalid_frame()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        var adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingConnectionStatusRequest(), Response(0x03, 0x01, [0x01, 0x01, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingCurrentTemperatureRequest(), Response(0x03, 0x02, [0x01, 0x08, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingTargetTemperatureRequest(), Response(0x03, 0x03, [0x01, 0x0A, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingSwitchStateRequest(), Response(0x03, 0x05, [0x01, 0x01, 0x00]));
+
+        var snapshot = await adapter.ReadCoolingSnapshotAsync();
+        Assert.True(snapshot.Ok, snapshot.Message);
+        Assert.True(snapshot.Value!.IsConnected);
+        Assert.Equal(80, snapshot.Value.CurrentTemperatureDeciC);   // 8℃ × 10
+        Assert.Equal(100, snapshot.Value.TargetTemperatureDeciC);   // 10℃ × 10
+        Assert.True(snapshot.Value.IsEnabled);
+        Assert.Equal(4, fake.ExchangeRequests.Count);
+
+        // fail closed：目标温度帧 CRC 错 → 不拼凑半截快照
+        var badFake = new InMemoryFakeDeviceByteTransport();
+        var badAdapter = new UnavailableRealDeviceAdapter(badFake);
+        badFake.EnqueueExchange(MainControllerProtocol.BuildCoolingConnectionStatusRequest(), Response(0x03, 0x01, [0x01, 0x01, 0x00]));
+        badFake.EnqueueExchange(MainControllerProtocol.BuildCoolingCurrentTemperatureRequest(), Response(0x03, 0x02, [0x01, 0x08, 0x00]));
+        var badCrc = Response(0x03, 0x03, [0x01, 0x0A, 0x00]);
+        badCrc[^3] ^= 0x01;
+        badFake.EnqueueExchange(MainControllerProtocol.BuildCoolingTargetTemperatureRequest(), badCrc);
+
+        var failed = await badAdapter.ReadCoolingSnapshotAsync();
+        Assert.False(failed.Ok);
+        Assert.Contains(nameof(IceImmunoProtocolError.CrcMismatch), failed.ErrorCode ?? string.Empty);
+        Assert.Equal(3, badFake.ExchangeRequests.Count); // 连接 + 当前 + 失败的目标，未再读开关
+    }
+
+    [Fact]
+    public async Task SetCoolingAsync_writes_target_and_switch_then_reads_back_with_deci_c_conversion()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+
+        var setTargetRequest = MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(8); // 0x03/0x04, 08 00
+        var setSwitchRequest = MainControllerProtocol.BuildSetCoolingSwitchStateRequest(true);     // 0x03/0x06, 01 00
+
+        fake.EnqueueExchange(setTargetRequest, Response(0x03, 0x04, [0x01]));
+        fake.EnqueueExchange(setSwitchRequest, Response(0x03, 0x06, [0x01]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingConnectionStatusRequest(), Response(0x03, 0x01, [0x01, 0x01, 0x00]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingCurrentTemperatureRequest(), Response(0x03, 0x02, [0x01, 0x09, 0x00])); // 9℃
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingTargetTemperatureRequest(), Response(0x03, 0x03, [0x01, 0x08, 0x00]));   // 8℃
+        fake.EnqueueExchange(MainControllerProtocol.BuildCoolingSwitchStateRequest(), Response(0x03, 0x05, [0x01, 0x01, 0x00]));
+
+        var result = await adapter.SetCoolingAsync(CoolingRequest(80, true));
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(DeviceCommandStatuses.Succeeded, result.Status);
+
+        Assert.Equal(6, fake.ExchangeRequests.Count);
+        Assert.All(fake.ExchangeRequests, request => Assert.Equal(DeviceByteTransportEndpoints.MainController, request.Endpoint));
+
+        // targetTemperatureDeciC=80 → 线上 payload 必须是 08 00（8℃），不是 50 00 或 80 00。
+        var setTargetFrame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal(MainControllerProtocol.CoolingClass, setTargetFrame.ParentClass);
+        Assert.Equal(MainControllerProtocol.CoolingSetTargetTemperatureSub, setTargetFrame.SubClass);
+        Assert.Equal<byte>([0x08, 0x00], setTargetFrame.Payload);
+
+        Assert.Equal(90, Convert.ToInt32(result.Data["currentTemperatureDeciC"]));  // 9℃ × 10
+        Assert.Equal(80, Convert.ToInt32(result.Data["targetTemperatureDeciC"]));   // 8℃ × 10
+        Assert.True(Convert.ToBoolean(result.Data["isEnabled"]));
+        Assert.True(Convert.ToBoolean(result.Data["isConnected"]));
+    }
+
+    [Theory]
+    [InlineData(85)]   // 非整度
+    [InlineData(-10)]  // 负值
+    [InlineData(410)]  // 超 40℃
+    public async Task SetCoolingAsync_rejects_out_of_protocol_range_without_any_io(int targetDeciC)
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+
+        var result = await adapter.SetCoolingAsync(CoolingRequest(targetDeciC, true));
+        Assert.False(result.Ok);
+        Assert.Equal("cooling_target_out_of_range", result.ErrorCode);
+        Assert.Empty(fake.ExchangeRequests); // 未发送任何字节
+    }
+
+    [Fact]
+    public async Task SetCoolingAsync_fails_closed_when_target_write_ack_fails()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        // 目标温度写入 ack 失败（ack 字节 0x02）→ 开关写入与回读都不应发生。
+        fake.EnqueueExchange(MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(8), Response(0x03, 0x04, [0x02]));
+
+        var result = await adapter.SetCoolingAsync(CoolingRequest(80, true));
+        Assert.False(result.Ok);
+        Assert.Single(fake.ExchangeRequests);
+    }
+
+    private static DeviceOperationRequest CoolingRequest(int targetDeciC, bool isEnabled) =>
+        new(
+            new DeviceCommandContext($"cmd-cooling-{targetDeciC}-{isEnabled}", null, "test", nameof(OfflineRealDeviceAdapterTests)),
+            DeviceModules.Cooling,
+            "set-cooling",
+            new Dictionary<string, object?>
+            {
+                ["targetTemperatureDeciC"] = targetDeciC,
+                ["isEnabled"] = isEnabled
+            });
 
     [Fact]
     public async Task Real_adapter_without_transport_is_not_configured_and_all_formal_control_paths_reject_without_io()
@@ -210,9 +312,6 @@ public sealed class OfflineRealDeviceAdapterTests
             RequestFor(DeviceModules.Pump, "drain"),
             RequestFor(DeviceModules.Pump, "detox"),
             RequestFor(DeviceModules.ReagentScanner, ReagentQrCommands.StartScan),
-            RequestFor(DeviceModules.Cooling, "set-target"),
-            RequestFor(DeviceModules.Cooling, "start"),
-            RequestFor(DeviceModules.Cooling, "stop"),
             RequestFor(DeviceModules.SampleScanner, "trigger"),
             RequestFor(DeviceModules.Workflow, "execute")
         };
@@ -228,11 +327,8 @@ public sealed class OfflineRealDeviceAdapterTests
             await adapter.RunPumpAsync(requests[6]),
             await adapter.RunPumpAsync(requests[7]),
             await adapter.ScanReagentAsync(requests[8]),
-            await adapter.SetCoolingAsync(requests[9]),
-            await adapter.SetCoolingAsync(requests[10]),
-            await adapter.SetCoolingAsync(requests[11]),
-            await adapter.ScanSampleAsync(requests[12]),
-            await adapter.ExecuteWorkflowActionAsync(requests[13])
+            await adapter.ScanSampleAsync(requests[9]),
+            await adapter.ExecuteWorkflowActionAsync(requests[10])
         };
 
         Assert.All(results, result =>

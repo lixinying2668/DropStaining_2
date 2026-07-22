@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Ports;
 using Stainer.Web.Application.Devices;
 
@@ -9,10 +10,10 @@ namespace Stainer.Web.Infrastructure.Devices;
 // - SerialPort（System.IO.Ports）仅存在于本 Transport 层；Application 层
 //   （UnavailableRealDeviceAdapter 等）只通过 IDeviceByteTransport 的
 //   ExchangeAsync / ReceiveAsync 获取结果，永远不会直接接触串口。
-// - 本阶段只允许“只读请求”。Transport 在发送前会解码请求帧并校验白名单：
-//     * 仅允许 TL_SYS_GET_WORK_STATUS（0x01/0x08）与 TL_SYS_GET_NODE_STATUS（0x01/0x09）。
-//     * 其他读命令保持接口准备（明确返回 NotSupported，不发出字节）。
-//     * 一切写/控制命令（MessageType == Request）一律 NotSupported。
+// - Transport 在发送前解码请求帧并校验“已审核主控命令白名单”（IsApprovedMainControllerCommand）：
+//     * 只读：0x01/0x08、0x01/0x09、0x04/0x09~0x0B、0x03/0x01~0x03、0x03/0x05。
+//     * 写入：仅制冷 0x03/0x04（目标温度）、0x03/0x06（开关），payload 须为 2 字节 UINT16 LE 且量程合法。
+//     * 其余命令（RESET、加热写、PWM、混匀、IO、扫码启动等）一律 NotSupported，不发出字节。
 // - COM 口由 MainControllerConnectionOptions 配置提供，绝不硬编码、绝不自动扫描。
 // - 不自动 Fallback 到 Mock；失败即返回对应状态码闭合。
 public sealed class MainControllerSerialTransport : IDeviceByteTransport
@@ -103,18 +104,19 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
                 $"Request message type must be 0x01; received 0x{requestFrame.MessageType:X2}.");
         }
 
-        if (!IsAllowedReadOnlyCommand(requestFrame))
+        if (!IsApprovedMainControllerCommand(requestFrame))
         {
-            // 白名单之外的命令（包括写/控制命令和其他读命令）一律拒绝，不发出字节。
-            // 任务要求：仅允许 TL_SYS_GET_WORK_STATUS 与 TL_SYS_GET_NODE_STATUS。
-            // 写操作（RESET、加热、PWM、混匀、IO、扫码启动）全部保持 NotSupported。
+            // 白名单之外的命令（其他读命令、未开放的写/控制命令、非法 payload）一律拒绝，不发出字节。
+            // 当前白名单：SystemClass 0x01/0x08、0x01/0x09；HeatingClass 0x04/0x09~0x0B；CoolingClass 0x03/0x01~0x06。
+            // 写操作（RESET、加热写、PWM、混匀、IO、扫码启动）仍保持拒绝。
             Diagnostic(MainControllerTransportDirection.None, request.RequestBytes, null, "command_not_supported", null);
             return Failure(
                 DeviceByteTransportStatuses.Failed,
                 "main_controller_command_not_supported",
-                $"Command 0x{requestFrame.ParentClass:X2}/0x{requestFrame.SubClass:X2} is not supported in the offline read-only boundary. " +
-                "Only TL_SYS_GET_WORK_STATUS (0x01/0x08), TL_SYS_GET_NODE_STATUS (0x01/0x09), " +
-                "and heating read commands 0x04/0x09, 0x04/0x0A, 0x04/0x0B with board id 0..3 are allowed.");
+                $"Command 0x{requestFrame.ParentClass:X2}/0x{requestFrame.SubClass:X2} is not on the approved main-controller whitelist. " +
+                "Allowed: TL_SYS_GET_WORK_STATUS (0x01/0x08), TL_SYS_GET_NODE_STATUS (0x01/0x09), " +
+                "heating read commands 0x04/0x09, 0x04/0x0A, 0x04/0x0B with board id 0..3, " +
+                "and cooling commands 0x03/0x01..0x06 (reads empty payload; 0x03/0x04 target UINT16 0..40, 0x03/0x06 switch UINT16 0/1).");
         }
 
         return await SendAndReceiveAsync(request.Operation, request.RequestBytes, requestFrame, cancellationToken);
@@ -413,11 +415,17 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
         port.WriteTimeout = Math.Max((int)writeTimeout.TotalMilliseconds, 50);
     }
 
-    // 只读白名单：允许 TL_SYS_GET_WORK_STATUS（0x01/0x08）、TL_SYS_GET_NODE_STATUS（0x01/0x09）
-    // 以及温度读取（HeatingClass 0x04 / subs 0x09/0x0A/0x0B，payload 须恰好 1 字节且 boardId ≤ 3）。
-    // 协议中主机查询帧的 MessageType 为 RequestType（0x01）；写/控制命令同样使用 RequestType，
-    // 因此只能按 (ParentClass, SubClass, Payload) 精确白名单放行。
-    private static bool IsAllowedReadOnlyCommand(IceImmunoFrame frame)
+    // 已审核主控命令白名单（不再是纯只读边界）：按 (ParentClass, SubClass, Payload) 精确放行
+    // 已评审的主控命令。协议中主机查询帧与控制/写帧的 MessageType 均为 RequestType（0x01），
+    // 因此不能按 MessageType 区分读/写，只能逐条 (ParentClass, SubClass, Payload) 校验。
+    //
+    // 当前放行：
+    //   - SystemClass 0x01：0x08（工作状态）、0x09（节点状态）
+    //   - HeatingClass 0x04：0x09/0x0A/0x0B（板温度读取，payload 恰 1 字节 boardId ≤ 3）
+    //   - CoolingClass 0x03：只读 0x01/0x02/0x03/0x05（payload 空）；写入 0x04（目标温度）、0x06（开关）
+    //     payload 恰 2 字节 UINT16 LE，且值在协议量程内（温度 0..40，开关 0/1）
+    // 其他命令（含 RESET、加热写、PWM、混匀、IO 等）一律拒绝，不发出字节。
+    private static bool IsApprovedMainControllerCommand(IceImmunoFrame frame)
     {
         if (frame.MessageType != IceImmunoSerialProtocol.RequestType)
         {
@@ -440,7 +448,45 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
             return true;
         }
 
+        // CoolingClass（制冷，父类 0x03）：只读 0x01/0x02/0x03/0x05 payload 须为空；
+        // 写入 0x04（目标温度 UINT16 LE 0..40）、0x06（开关 UINT16 LE 仅 0/1）payload 须恰 2 字节且量程合法。
+        if (frame.ParentClass == MainControllerProtocol.CoolingClass)
+        {
+            return frame.SubClass switch
+            {
+                MainControllerProtocol.CoolingConnectionStatusSub => frame.Payload.Length == 0,
+                MainControllerProtocol.CoolingCurrentTemperatureSub => frame.Payload.Length == 0,
+                MainControllerProtocol.CoolingTargetTemperatureSub => frame.Payload.Length == 0,
+                MainControllerProtocol.CoolingSwitchStateSub => frame.Payload.Length == 0,
+                MainControllerProtocol.CoolingSetTargetTemperatureSub => IsValidCoolingTargetPayload(frame.Payload),
+                MainControllerProtocol.CoolingSetSwitchStateSub => IsValidCoolingSwitchPayload(frame.Payload),
+                _ => false
+            };
+        }
+
         return false;
+    }
+
+    private static bool IsValidCoolingTargetPayload(byte[] payload)
+    {
+        if (payload.Length != 2)
+        {
+            return false;
+        }
+
+        var celsius = BinaryPrimitives.ReadUInt16LittleEndian(payload);
+        return celsius <= 40;
+    }
+
+    private static bool IsValidCoolingSwitchPayload(byte[] payload)
+    {
+        if (payload.Length != 2)
+        {
+            return false;
+        }
+
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(payload);
+        return value == 0 || value == 1;
     }
 
     private static Parity MapParity(MainControllerParity parity) => parity switch

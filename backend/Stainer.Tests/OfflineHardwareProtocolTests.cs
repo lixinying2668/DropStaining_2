@@ -174,6 +174,69 @@ public sealed class OfflineHardwareProtocolTests
         AssertRequest(MainControllerProtocol.BuildQrTextRequest(), 0x08, 0x01, []);
     }
 
+    [Fact]
+    public void Cooling_builds_confirmed_main_controller_request_frames_with_little_endian_payload()
+    {
+        AssertRequest(MainControllerProtocol.BuildCoolingConnectionStatusRequest(), 0x03, 0x01, []);
+        AssertRequest(MainControllerProtocol.BuildCoolingCurrentTemperatureRequest(), 0x03, 0x02, []);
+        AssertRequest(MainControllerProtocol.BuildCoolingTargetTemperatureRequest(), 0x03, 0x03, []);
+        AssertRequest(MainControllerProtocol.BuildCoolingSwitchStateRequest(), 0x03, 0x05, []);
+
+        // 10℃ → payload 0A 00（little-endian），不是 0A 整度或 64 00。
+        AssertRequest(MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(10), 0x03, 0x04, [0x0A, 0x00]);
+        AssertRequest(MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(0), 0x03, 0x04, [0x00, 0x00]);
+        AssertRequest(MainControllerProtocol.BuildSetCoolingSwitchStateRequest(true), 0x03, 0x06, [0x01, 0x00]);
+        AssertRequest(MainControllerProtocol.BuildSetCoolingSwitchStateRequest(false), 0x03, 0x06, [0x00, 0x00]);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(41));
+    }
+
+    [Fact]
+    public void Cooling_parses_connection_temperature_target_and_switch_with_range_validation()
+    {
+        var connected = MainControllerProtocol.ParseCoolingConnectionStatus(Response(0x03, 0x01, [0x01, 0x01, 0x00]));
+        Assert.True(connected.IsConnected);
+        var disconnected = MainControllerProtocol.ParseCoolingConnectionStatus(Response(0x03, 0x01, [0x01, 0x00, 0x00]));
+        Assert.False(disconnected.IsConnected);
+
+        var current = MainControllerProtocol.ParseCoolingCurrentTemperature(Response(0x03, 0x02, [0x01, 0x08, 0x00]));
+        Assert.Equal(8, current.Celsius);
+        Assert.True(current.IsCurrent);
+
+        var target = MainControllerProtocol.ParseCoolingTargetTemperature(Response(0x03, 0x03, [0x01, 0x0A, 0x00]));
+        Assert.Equal(10, target.Celsius);
+        Assert.False(target.IsCurrent);
+
+        var swOn = MainControllerProtocol.ParseCoolingSwitchState(Response(0x03, 0x05, [0x01, 0x01, 0x00]));
+        Assert.True(swOn.IsEnabled);
+        var swOff = MainControllerProtocol.ParseCoolingSwitchState(Response(0x03, 0x05, [0x01, 0x00, 0x00]));
+        Assert.False(swOff.IsEnabled);
+    }
+
+    [Fact]
+    public void Cooling_parse_rejects_wrong_parent_sub_ack_payload_length_and_out_of_range_values()
+    {
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingCurrentTemperature(Response(0x04, 0x02, [0x01, 0x08, 0x00]))); // 错父类
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingCurrentTemperature(Response(0x03, 0x03, [0x01, 0x08, 0x00]))); // 错子类
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingCurrentTemperature(Response(0x03, 0x02, [0x02, 0x08, 0x00]))); // ack 非成功
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingCurrentTemperature(Response(0x03, 0x02, [0x01, 0x08])));       // payload 长度错
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingCurrentTemperature(Response(0x03, 0x02, [0x01, 0xFF, 0x00])));  // 当前温度 >100
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingTargetTemperature(Response(0x03, 0x03, [0x01, 0x29, 0x00])));   // 目标温度 41 >40
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingConnectionStatus(Response(0x03, 0x01, [0x01, 0x02, 0x00])));   // 连接状态非 0/1
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingSwitchState(Response(0x03, 0x05, [0x01, 0x02, 0x00])));       // 开关值非 0/1
+    }
+
+    [Fact]
+    public void Cooling_setter_ack_requires_success_ack_with_empty_payload()
+    {
+        MainControllerProtocol.ParseCoolingAck(Response(0x03, 0x04, [0x01]), MainControllerProtocol.CoolingSetTargetTemperatureSub);
+        MainControllerProtocol.ParseCoolingAck(Response(0x03, 0x06, [0x01]), MainControllerProtocol.CoolingSetSwitchStateSub);
+
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingAck(Response(0x03, 0x04, [0x02]), MainControllerProtocol.CoolingSetTargetTemperatureSub)); // 失败 ack
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingAck(Response(0x03, 0x04, [0x01, 0x00]), MainControllerProtocol.CoolingSetTargetTemperatureSub)); // 多余 payload
+        Assert.Throws<IceImmunoProtocolException>(() => MainControllerProtocol.ParseCoolingAck(Response(0x03, 0x06, [0x01]), MainControllerProtocol.CoolingSetTargetTemperatureSub)); // 子类不匹配
+    }
+
     [Theory]
     [InlineData(0x00)]
     [InlineData(0x01)]

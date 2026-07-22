@@ -248,44 +248,93 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
                 value);
     }
 
-    public async Task<RealDeviceReadResult<StandaloneCoolingFrame>> ReadCoolingTemperatureAsync(
+    // 制冷读取统一走主控 0x03（父类 CoolingClass）。不再使用 StandaloneCooling 通道。
+    public Task<RealDeviceReadResult<MainControllerCoolingConnectionStatus>> ReadCoolingConnectionStatusAsync(
+        CancellationToken cancellationToken = default) =>
+        ExchangeMainControllerAsync(
+            "read-cooling-connection",
+            MainControllerProtocol.BuildCoolingConnectionStatusRequest(),
+            MainControllerProtocol.CoolingClass,
+            MainControllerProtocol.CoolingConnectionStatusSub,
+            MainControllerProtocol.ParseCoolingConnectionStatus,
+            cancellationToken);
+
+    public Task<RealDeviceReadResult<MainControllerCoolingTemperature>> ReadCoolingCurrentTemperatureAsync(
+        CancellationToken cancellationToken = default) =>
+        ExchangeMainControllerAsync(
+            "read-cooling-current-temperature",
+            MainControllerProtocol.BuildCoolingCurrentTemperatureRequest(),
+            MainControllerProtocol.CoolingClass,
+            MainControllerProtocol.CoolingCurrentTemperatureSub,
+            MainControllerProtocol.ParseCoolingCurrentTemperature,
+            cancellationToken);
+
+    public Task<RealDeviceReadResult<MainControllerCoolingTemperature>> ReadCoolingTargetTemperatureAsync(
+        CancellationToken cancellationToken = default) =>
+        ExchangeMainControllerAsync(
+            "read-cooling-target-temperature",
+            MainControllerProtocol.BuildCoolingTargetTemperatureRequest(),
+            MainControllerProtocol.CoolingClass,
+            MainControllerProtocol.CoolingTargetTemperatureSub,
+            MainControllerProtocol.ParseCoolingTargetTemperature,
+            cancellationToken);
+
+    public Task<RealDeviceReadResult<MainControllerCoolingSwitchState>> ReadCoolingSwitchStateAsync(
+        CancellationToken cancellationToken = default) =>
+        ExchangeMainControllerAsync(
+            "read-cooling-switch-state",
+            MainControllerProtocol.BuildCoolingSwitchStateRequest(),
+            MainControllerProtocol.CoolingClass,
+            MainControllerProtocol.CoolingSwitchStateSub,
+            MainControllerProtocol.ParseCoolingSwitchState,
+            cancellationToken);
+
+    public async Task<RealDeviceReadResult<MainControllerCoolingSnapshot>> ReadCoolingSnapshotAsync(
         CancellationToken cancellationToken = default)
     {
-        var requestBytes = StandaloneCoolingProtocol.BuildReadTemperatureFrame();
-        var unavailable = TransportUnavailable<StandaloneCoolingFrame>(requestBytes);
-        if (unavailable is not null)
+        // 顺序读取连接/当前/目标/开关四项；任一失败即 fail closed，绝不拼凑半截快照。
+        var connection = await ReadCoolingConnectionStatusAsync(cancellationToken);
+        if (!connection.Ok)
         {
-            return unavailable;
+            return SnapshotFailure(connection);
         }
 
-        var exchange = await transport!.ExchangeAsync(
-            new DeviceByteTransportRequest(
-                DeviceByteTransportEndpoints.StandaloneCooling,
-                "read-current-temperature",
-                requestBytes),
-            cancellationToken);
-        var responseBytes = Flatten(exchange.ResponseChunks);
-        var transportFailure = TransportFailure<StandaloneCoolingFrame>(exchange, requestBytes, responseBytes);
-        if (transportFailure is not null)
+        var current = await ReadCoolingCurrentTemperatureAsync(cancellationToken);
+        if (!current.Ok)
         {
-            return transportFailure;
+            return SnapshotFailure(current);
         }
 
-        var parsed = StandaloneCoolingProtocol.ParseResponse(responseBytes);
-        if (parsed.Status != StandaloneCoolingResponseStatus.Valid
-            || parsed.Frame is null
-            || parsed.Frame.Kind != StandaloneCoolingFrameKind.Temperature)
+        var target = await ReadCoolingTargetTemperatureAsync(cancellationToken);
+        if (!target.Ok)
         {
-            return Failure<StandaloneCoolingFrame>(
-                DeviceCommandStatuses.Failed,
-                "cooling_invalid_response",
-                parsed.Message ?? "Cooling response was not a temperature frame.",
-                requestBytes,
-                responseBytes);
+            return SnapshotFailure(target);
         }
 
-        return Success(parsed.Frame, requestBytes, responseBytes);
+        var sw = await ReadCoolingSwitchStateAsync(cancellationToken);
+        if (!sw.Ok)
+        {
+            return SnapshotFailure(sw);
+        }
+
+        var snapshot = new MainControllerCoolingSnapshot(
+            connection.Value!.IsConnected,
+            current.Value!.Celsius * 10,   // 协议整摄氏度 → deci-C
+            target.Value!.Celsius * 10,
+            sw.Value!.IsEnabled);
+
+        var requests = Flatten([connection.RequestBytes, current.RequestBytes, target.RequestBytes, sw.RequestBytes]);
+        var responses = Flatten([connection.ResponseBytes, current.ResponseBytes, target.ResponseBytes, sw.ResponseBytes]);
+        return Success(snapshot, requests, responses);
     }
+
+    private static RealDeviceReadResult<MainControllerCoolingSnapshot> SnapshotFailure<T>(RealDeviceReadResult<T> failed) =>
+        Failure<MainControllerCoolingSnapshot>(
+            failed.Status,
+            string.IsNullOrEmpty(failed.ErrorCode) ? "cooling_snapshot_failed" : failed.ErrorCode!,
+            failed.Message,
+            failed.RequestBytes,
+            failed.ResponseBytes);
 
     public Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
@@ -293,7 +342,177 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
     public Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> QueryLisAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> SetTemperatureAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
-    public Task<DeviceCommandResult> SetCoolingAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
+
+    // Real 模式制冷写入：通过主控 0x03 下发。先写目标温度（0x03/0x04），再写开关状态（0x03/0x06），
+    // 然后回读快照确认。任一步失败即 fail closed，绝不回退 Mock、绝不假成功。
+    // 协议温度为整摄氏度 UINT16（0..40），所以 deci-C 必须能被 10 整除且落在 0..400。
+    public async Task<DeviceCommandResult> SetCoolingAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var steps = new List<CoolingStep>();
+
+        if (!TryConvertToInt32(request.Parameters.GetValueOrDefault("targetTemperatureDeciC"), out var targetDeciC))
+        {
+            return CoolingFail(request, startedAt, "cooling_target_missing",
+                "Cooling target temperature (targetTemperatureDeciC) is required as an integer deci-Celsius.", steps);
+        }
+
+        if (!TryConvertToBoolean(request.Parameters.GetValueOrDefault("isEnabled"), out var isEnabled))
+        {
+            return CoolingFail(request, startedAt, "cooling_switch_missing",
+                "Cooling switch flag (isEnabled) is required.", steps);
+        }
+
+        if (targetDeciC < 0 || targetDeciC > 400 || targetDeciC % 10 != 0)
+        {
+            // 真实协议不支持该温度：未发送任何字节即拒绝。
+            return CoolingFail(request, startedAt, "cooling_target_out_of_range",
+                $"Cooling target {targetDeciC} deci-C is outside the main-controller protocol range (0..40 °C in whole degrees → deci-C 0..400, multiple of 10).", steps);
+        }
+
+        var targetCelsius = (ushort)(targetDeciC / 10);
+
+        var setTarget = await SendCoolingWriteAsync(
+            "set-cooling-target-temperature",
+            MainControllerProtocol.BuildSetCoolingTargetTemperatureRequest(targetCelsius),
+            MainControllerProtocol.CoolingSetTargetTemperatureSub,
+            cancellationToken);
+        steps.Add(Step("set-target-temperature", setTarget));
+        if (!setTarget.Ok)
+        {
+            return CoolingFail(request, startedAt, setTarget.ErrorCode ?? "cooling_set_target_failed", setTarget.Message, steps);
+        }
+
+        var setSwitch = await SendCoolingWriteAsync(
+            "set-cooling-switch-status",
+            MainControllerProtocol.BuildSetCoolingSwitchStateRequest(isEnabled),
+            MainControllerProtocol.CoolingSetSwitchStateSub,
+            cancellationToken);
+        steps.Add(Step("set-switch-status", setSwitch));
+        if (!setSwitch.Ok)
+        {
+            return CoolingFail(request, startedAt, setSwitch.ErrorCode ?? "cooling_set_switch_failed", setSwitch.Message, steps);
+        }
+
+        var snapshot = await ReadCoolingSnapshotAsync(cancellationToken);
+        steps.Add(Step("read-back-snapshot", snapshot));
+        if (!snapshot.Ok)
+        {
+            return CoolingFail(request, startedAt, snapshot.ErrorCode ?? "cooling_readback_failed", snapshot.Message, steps);
+        }
+
+        return new DeviceCommandResult(
+            true,
+            DeviceCommandStatuses.Succeeded,
+            request.ModuleCode,
+            request.Action,
+            null,
+            "Cooling target and switch were applied and confirmed by the main controller.",
+            startedAt,
+            DateTimeOffset.UtcNow,
+            true,
+            new Dictionary<string, object?>
+            {
+                ["currentTemperatureDeciC"] = snapshot.Value!.CurrentTemperatureDeciC,
+                ["targetTemperatureDeciC"] = snapshot.Value.TargetTemperatureDeciC,
+                ["isEnabled"] = snapshot.Value.IsEnabled,
+                ["isConnected"] = snapshot.Value.IsConnected,
+                ["commandedTargetDeciC"] = targetDeciC,
+                ["commandedEnabled"] = isEnabled,
+                ["communication"] = BuildCoolingCommunication(steps)
+            });
+    }
+
+    // 制冷写命令复用主控读交换：parse 委托给 ParseCoolingAck，ack 非法时它会抛 IceImmunoProtocolException，
+    // ParseMainControllerExchange 会把异常转成结构化 Failure。返回 bool 仅占位。
+    private Task<RealDeviceReadResult<bool>> SendCoolingWriteAsync(
+        string operation,
+        byte[] requestBytes,
+        byte expectedSubClass,
+        CancellationToken cancellationToken) =>
+        ExchangeMainControllerAsync(
+            operation,
+            requestBytes,
+            MainControllerProtocol.CoolingClass,
+            expectedSubClass,
+            frame =>
+            {
+                MainControllerProtocol.ParseCoolingAck(frame, expectedSubClass);
+                return true;
+            },
+            cancellationToken);
+
+    private static DeviceCommandResult CoolingFail(
+        DeviceOperationRequest request,
+        DateTimeOffset startedAt,
+        string errorCode,
+        string message,
+        List<CoolingStep> steps)
+    {
+        var acknowledged = steps.Count > 0 && steps.Any(s => s.Ok);
+        var data = new Dictionary<string, object?>
+        {
+            ["errorCode"] = errorCode,
+            ["communication"] = BuildCoolingCommunication(steps)
+        };
+        return new DeviceCommandResult(
+            false,
+            DeviceCommandStatuses.Failed,
+            request.ModuleCode,
+            request.Action,
+            errorCode,
+            message,
+            startedAt,
+            DateTimeOffset.UtcNow,
+            acknowledged,
+            data);
+    }
+
+    // 已脱敏通信摘要：仅协议帧 hex + 状态码，不含用户名/路径/序列号等敏感信息（与现有 DevicePrecheckService 风格一致）。
+    private static IReadOnlyList<object> BuildCoolingCommunication(List<CoolingStep> steps) =>
+        steps.Select(step => (object)new Dictionary<string, object?>
+        {
+            ["name"] = step.Name,
+            ["ok"] = step.Ok,
+            ["status"] = step.Status,
+            ["errorCode"] = step.ErrorCode,
+            ["requestHex"] = Convert.ToHexString(step.RequestBytes),
+            ["responseHex"] = Convert.ToHexString(step.ResponseBytes)
+        }).ToList();
+
+    private static CoolingStep Step<T>(string name, RealDeviceReadResult<T> result) =>
+        new(name, result.Ok, result.Status, result.ErrorCode, result.Message, result.RequestBytes, result.ResponseBytes);
+
+    private static bool TryConvertToInt32(object? value, out int result)
+    {
+        try
+        {
+            result = Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            result = 0;
+            return false;
+        }
+    }
+
+    private static bool TryConvertToBoolean(object? value, out bool result)
+    {
+        try
+        {
+            result = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            result = false;
+            return false;
+        }
+    }
+
+    private sealed record CoolingStep(string Name, bool Ok, string Status, string? ErrorCode, string Message, byte[] RequestBytes, byte[] ResponseBytes);
+
     public Task<DeviceCommandResult> RunPumpAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> ReadLiquidLevelsAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> MixAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);

@@ -673,7 +673,10 @@ public sealed class RuntimeLedgerExecutorTests
                 {
                     config.AddInMemoryCollection(new Dictionary<string, string?>
                     {
-                        ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}"
+                        ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",
+                        ["MachineExecutor:StepVisibleDelayMilliseconds"] = "0",
+                        ["Motion:PipetteAspirateVisibleMilliseconds"] = "0",
+                        ["Motion:PipetteWashVisibleMilliseconds"] = "0"
                     });
                 });
             });

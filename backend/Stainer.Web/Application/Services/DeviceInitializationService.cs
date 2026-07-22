@@ -26,7 +26,7 @@ public sealed class DeviceInitializationService(
     [
         new(DeviceModules.Controller, "connect", "SCDevice.Connect / OpenPort / ConnectEthernet", "SOCON.API V3.1", "第10页（Connect）"),
         new(DeviceModules.RobotArm, "home", "InitX / InitY / InitZ / InitDevice / CheckHome", "SOCON.API V3.1", "第19-22页"),
-        new(DeviceModules.Cooling, "connect", "FF 00 81 7E / FF 00 82 7D", "制冷串口说明V1.0", "第1页"),
+        new(DeviceModules.Cooling, "connect", "主控 TL_COOL_GET_MODULE_CONNECT 0x03/0x01（+ 当前/目标温度 0x03/0x02、0x03/0x03，开关 0x03/0x05）", "冰免通讯协议 ver1.0.6", "制冷模块（主控 0x03）"),
         new(DeviceModules.SampleScanner, "check-online", "IO状态 / DCR55通信状态检测", "DCR55说明书", "第13-15页"),
         new(DeviceModules.ReagentScanner, "check-online", "IO状态 / 扫码心跳 / 通信状态", "DCR55说明书", "第13-15页"),
         new(DeviceModules.LiquidLevel, "read-sensors", "LiqDet / GetIOState / 光耦读取", "SOCON.API V3.1", "第16-25页"),
@@ -641,7 +641,9 @@ public sealed class DeviceInitializationService(
             ["mockFixedTemperatureC"] = 5,
             ["currentTemperatureDeciC"] = 50,
             ["currentTemperatureC"] = 5,
-            ["coolingSerialCommand"] = "FF 00 81 7E / FF 00 82 7D"
+            // 真实制冷路径已统一为主控 0x03（连接 0x03/0x01，温度 0x03/0x02~0x03，开关 0x03/0x05~0x06）。
+            // 此处仅保留 Mock 默认值；Real 模式由 ThermalControlService 通过主控回读真实状态。
+            ["coolingSerialCommand"] = "主控 0x03：连接 0x03/0x01，温度 0x03/0x02、0x03/0x03，开关 0x03/0x05、0x03/0x06"
         };
 
     private static IReadOnlyDictionary<string, object?> Merge(params IReadOnlyDictionary<string, object?>[] dictionaries)
