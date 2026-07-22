@@ -107,8 +107,8 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
         if (!IsApprovedMainControllerCommand(requestFrame))
         {
             // 白名单之外的命令（其他读命令、未开放的写/控制命令、非法 payload）一律拒绝，不发出字节。
-            // 当前白名单：SystemClass 0x01/0x08、0x01/0x09；HeatingClass 0x04/0x09~0x0B；CoolingClass 0x03/0x01~0x06。
-            // 写操作（RESET、加热写、PWM、混匀、IO、扫码启动）仍保持拒绝。
+            // 当前白名单：SystemClass 0x01/0x08、0x01/0x09；HeatingClass 0x04/0x09~0x0B；CoolingClass 0x03/0x01~0x06；QrClass 0x08/0x01、0x04~0x06；PwmClass 0x07/0x02、0x07/0x04。
+            // 写操作（RESET、加热写、混匀、IO 等）仍保持拒绝；试剂 QR 启动/复位（0x08/0x04、0x08/0x05）、清洗泵 PWM 写（0x07/0x02、0x07/0x04）已开放。
             Diagnostic(MainControllerTransportDirection.None, request.RequestBytes, null, "command_not_supported", null);
             return Failure(
                 DeviceByteTransportStatuses.Failed,
@@ -116,7 +116,9 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
                 $"Command 0x{requestFrame.ParentClass:X2}/0x{requestFrame.SubClass:X2} is not on the approved main-controller whitelist. " +
                 "Allowed: TL_SYS_GET_WORK_STATUS (0x01/0x08), TL_SYS_GET_NODE_STATUS (0x01/0x09), " +
                 "heating read commands 0x04/0x09, 0x04/0x0A, 0x04/0x0B with board id 0..3, " +
-                "and cooling commands 0x03/0x01..0x06 (reads empty payload; 0x03/0x04 target UINT16 0..40, 0x03/0x06 switch UINT16 0/1).");
+                "cooling commands 0x03/0x01..0x06 (reads empty payload; 0x03/0x04 target UINT16 0..40, 0x03/0x06 switch UINT16 0/1), " +
+                "reagent QR commands 0x08/0x04 (start scan), 0x08/0x05 (reset), 0x08/0x06 (status), 0x08/0x01 (text) with empty payload, " +
+                "and wash PWM writes 0x07/0x02 (single [id:uint8][value:int16 LE -100..100]), 0x07/0x04 (all 4×int16 LE -100..100).");
         }
 
         return await SendAndReceiveAsync(request.Operation, request.RequestBytes, requestFrame, cancellationToken);
@@ -424,7 +426,9 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
     //   - HeatingClass 0x04：0x09/0x0A/0x0B（板温度读取，payload 恰 1 字节 boardId ≤ 3）
     //   - CoolingClass 0x03：只读 0x01/0x02/0x03/0x05（payload 空）；写入 0x04（目标温度）、0x06（开关）
     //     payload 恰 2 字节 UINT16 LE，且值在协议量程内（温度 0..40，开关 0/1）
-    // 其他命令（含 RESET、加热写、PWM、混匀、IO 等）一律拒绝，不发出字节。
+    //   - QrClass 0x08：写入 0x04（启动扫描）、0x05（复位）payload 空；只读 0x06（扫描状态）、0x01（文本）payload 空
+    //   - PwmClass 0x07：写入 0x02（单通道 [pwmId][int16 LE -100..100]）、0x04（全通道 4×int16 LE -100..100）
+    // 其他命令（含 RESET、加热写、混匀、IO 等）一律拒绝，不发出字节。
     private static bool IsApprovedMainControllerCommand(IceImmunoFrame frame)
     {
         if (frame.MessageType != IceImmunoSerialProtocol.RequestType)
@@ -464,6 +468,32 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
             };
         }
 
+        // QrClass（试剂二维码，父类 0x08）：写入 0x04（启动扫描）、0x05（复位）payload 须空；
+        // 只读 0x06（扫描状态）、0x01（文本）请求 payload 须空。
+        if (frame.ParentClass == MainControllerProtocol.QrClass)
+        {
+            return frame.SubClass switch
+            {
+                MainControllerProtocol.QrStartScanSub => frame.Payload.Length == 0,
+                MainControllerProtocol.QrResetScanSub => frame.Payload.Length == 0,
+                0x06 => frame.Payload.Length == 0,
+                0x01 => frame.Payload.Length == 0,
+                _ => false
+            };
+        }
+
+        // PwmClass（清洗泵，父类 0x07）：写入 0x02（单通道，payload=[pwmId:uint8 0~3][int16 LE -100~100]）、
+        // 0x04（全通道，payload=4×int16 LE -100~100）。
+        if (frame.ParentClass == MainControllerProtocol.PwmClass)
+        {
+            return frame.SubClass switch
+            {
+                MainControllerProtocol.PwmSetIdValueSub => IsValidPwmSinglePayload(frame.Payload),
+                MainControllerProtocol.PwmSetAllValueSub => IsValidPwmAllPayload(frame.Payload),
+                _ => false
+            };
+        }
+
         return false;
     }
 
@@ -487,6 +517,36 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
 
         var value = BinaryPrimitives.ReadUInt16LittleEndian(payload);
         return value == 0 || value == 1;
+    }
+
+    private static bool IsValidPwmSinglePayload(byte[] payload)
+    {
+        if (payload.Length != 3 || payload[0] > 3)
+        {
+            return false;
+        }
+
+        var value = BinaryPrimitives.ReadInt16LittleEndian(payload.AsSpan(1, 2));
+        return value >= -100 && value <= 100;
+    }
+
+    private static bool IsValidPwmAllPayload(byte[] payload)
+    {
+        if (payload.Length != 8)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < 4; index++)
+        {
+            var value = BinaryPrimitives.ReadInt16LittleEndian(payload.AsSpan(index * 2, 2));
+            if (value < -100 || value > 100)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static Parity MapParity(MainControllerParity parity) => parity switch

@@ -23,6 +23,16 @@ public static class MainControllerProtocol
     public const byte CoolingSwitchStateSub = 0x05;        // TL_COOL_GET_SWITCH_STATUS (0/1)
     public const byte CoolingSetSwitchStateSub = 0x06;     // TL_COOL_SET_SWITCH_STATUS (0/1)
 
+    // 试剂二维码扫码（QR，父类 0x08）子命令 —— 主控内置多通道扫码模块（冰免通讯协议 ver1.0.6）。
+    // 试剂瓶条码由主控 0x08 扫码（不随机械臂、不用 DCR55）；只读 0x01=文本、0x06=状态见下方 builder。
+    public const byte QrStartScanSub = 0x04;   // TL_QR_START_SCAN（启动扫描，写）
+    public const byte QrResetScanSub = 0x05;   // TL_QR_RESET_SCAN（复位，写）
+
+    // 清洗泵 PWM（父类 0x07）写入子命令 —— 4 通道清洗泵，INT16 小端 -100~100（冰免通讯协议 ver1.0.6）。
+    // pwm0~3 对应通道0~3 清洗泵；只读 0x06（检测值）见 BuildPwmSpeedsRequest。
+    public const byte PwmSetIdValueSub = 0x02;   // TL_PWM_SET_ID_SET_VALUE（单通道写）
+    public const byte PwmSetAllValueSub = 0x04;  // TL_PWM_SET_ALL_SET_VALUE（全通道写）
+
     public static byte[] BuildWorkStatusRequest() => Build(SystemClass, 0x08);
     public static byte[] BuildNodeStatusRequest() => Build(SystemClass, 0x09);
     public static byte[] BuildRunTimeRequest() => Build(SystemClass, 0x05);
@@ -34,6 +44,49 @@ public static class MainControllerProtocol
     public static byte[] BuildMixerRemainingCountRequest(byte boardId) => BuildBoardRequest(MixerClass, 0x03, boardId);
     public static byte[] BuildQrScanStatusRequest() => Build(QrClass, 0x06);
     public static byte[] BuildQrTextRequest() => Build(QrClass, 0x01);
+    public static byte[] BuildQrStartScanRequest() => Build(QrClass, QrStartScanSub);
+    public static byte[] BuildQrResetScanRequest() => Build(QrClass, QrResetScanSub);
+
+    // 清洗泵 PWM 写入：单通道（0x07/0x02，payload=[pwmId:uint8 0~3][值:int16 LE -100~100]）。构造期校验量程，避免把非法值打到线上。
+    public static byte[] BuildSetPwmValueRequest(byte pwmId, short value)
+    {
+        if (pwmId > 3)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pwmId), "PWM id must be 0..3.");
+        }
+        if (value < -100 || value > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "PWM value must be -100..100.");
+        }
+
+        var payload = new byte[3];
+        payload[0] = pwmId;
+        BinaryPrimitives.WriteInt16LittleEndian(payload.AsSpan(1), value);
+        return IceImmunoSerialProtocol.BuildRequestFrame(PwmClass, PwmSetIdValueSub, payload);
+    }
+
+    // 清洗泵 PWM 写入：全通道（0x07/0x04，payload=4×int16 LE -100~100）。构造期校验量程。
+    public static byte[] BuildSetAllPwmValuesRequest(IReadOnlyList<short> values)
+    {
+        if (values.Count != 4)
+        {
+            throw new ArgumentException("Exactly 4 PWM values are required.", nameof(values));
+        }
+        foreach (var value in values)
+        {
+            if (value < -100 || value > 100)
+            {
+                throw new ArgumentOutOfRangeException(nameof(values), "PWM value must be -100..100.");
+            }
+        }
+
+        var payload = new byte[8];
+        for (var index = 0; index < 4; index++)
+        {
+            BinaryPrimitives.WriteInt16LittleEndian(payload.AsSpan(index * 2, 2), values[index]);
+        }
+        return IceImmunoSerialProtocol.BuildRequestFrame(PwmClass, PwmSetAllValueSub, payload);
+    }
 
     // 制冷只读请求：父类 0x03，无 payload（请求帧 payload 为空）。
     public static byte[] BuildCoolingConnectionStatusRequest() => Build(CoolingClass, CoolingConnectionStatusSub);
@@ -219,6 +272,22 @@ public static class MainControllerProtocol
     // 制冷 setter 成功 ack：parent=0x03/sub=messageType=Response，payload 恰为 [0x01]（成功 ack，无业务数据）。
     public static void ParseCoolingAck(IceImmunoFrame frame, byte subClass) =>
         EnsureSuccessResponse(frame, CoolingClass, subClass, 0);
+
+    // 试剂 QR 启动/复位成功 ack：parent=0x08、sub=0x04/0x05、messageType=Response，payload 恰为 [0x01]（成功 ack，无业务数据）。
+    public static void ParseQrStartScanAck(IceImmunoFrame frame) =>
+        EnsureSuccessResponse(frame, QrClass, QrStartScanSub, 0);
+    public static void ParseQrResetScanAck(IceImmunoFrame frame) =>
+        EnsureSuccessResponse(frame, QrClass, QrResetScanSub, 0);
+
+    // 清洗泵 PWM 写入成功 ack：单通道 0x07/0x02 应答=[ack][pwmId]（返回回显的 PWM ID）；全通道 0x07/0x04 应答=[ack]。
+    public static byte ParsePwmSetIdValueAck(IceImmunoFrame frame)
+    {
+        var data = EnsureSuccessResponse(frame, PwmClass, PwmSetIdValueSub, 1);
+        return data[0];
+    }
+
+    public static void ParsePwmSetAllAck(IceImmunoFrame frame) =>
+        EnsureSuccessResponse(frame, PwmClass, PwmSetAllValueSub, 0);
 
     private static byte[] Build(byte parentClass, byte subClass) =>
         IceImmunoSerialProtocol.BuildRequestFrame(parentClass, subClass);

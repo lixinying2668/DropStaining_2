@@ -339,7 +339,68 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
     public Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> ScanSampleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
-    public Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
+    // Real 模式试剂扫码下发：仅试剂二维码的启动/复位写真发字节到主控 0x08（TL_QR_START_SCAN 0x08/0x04、
+    // TL_QR_RESET_SCAN 0x08/0x05），照 SetCoolingAsync 范本（构造帧 → ExchangeAsync → 解析 ACK → 脱敏摘要）。
+    // 其余试剂 action（含试剂状态通知 reagent.stateChanged 等语义化动作）仍 RejectAsync，保持 fail-closed，不误触发扫码。
+    // 试剂瓶条码由主控 0x08 扫码模块处理（不随机械臂、不用 DCR55）。
+    public async Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    {
+        var (requestBytes, expectedSub, operation) = request.Action switch
+        {
+            ReagentQrCommands.StartScan => (MainControllerProtocol.BuildQrStartScanRequest(), MainControllerProtocol.QrStartScanSub, "reagent-qr-start-scan"),
+            ReagentQrCommands.ResetScan => (MainControllerProtocol.BuildQrResetScanRequest(), MainControllerProtocol.QrResetScanSub, "reagent-qr-reset-scan"),
+            _ => (Array.Empty<byte>(), (byte)0, string.Empty)
+        };
+
+        if (operation.Length == 0)
+        {
+            // 非试剂扫码的 action（试剂状态通知等）仍 fail-closed，不发字节。
+            return await RejectAsync(request);
+        }
+
+        var startedAt = DateTimeOffset.UtcNow;
+        var steps = new List<CoolingStep>();
+
+        var exchange = await ExchangeMainControllerAsync(
+            operation,
+            requestBytes,
+            MainControllerProtocol.QrClass,
+            expectedSub,
+            frame =>
+            {
+                if (expectedSub == MainControllerProtocol.QrStartScanSub)
+                {
+                    MainControllerProtocol.ParseQrStartScanAck(frame);
+                }
+                else
+                {
+                    MainControllerProtocol.ParseQrResetScanAck(frame);
+                }
+                return true;
+            },
+            cancellationToken);
+        steps.Add(Step(operation, exchange));
+
+        if (!exchange.Ok)
+        {
+            return CoolingFail(request, startedAt, exchange.ErrorCode ?? "reagent_qr_write_failed", exchange.Message, steps);
+        }
+
+        return new DeviceCommandResult(
+            true,
+            DeviceCommandStatuses.Succeeded,
+            request.ModuleCode,
+            request.Action,
+            null,
+            "Reagent QR scan command was accepted by the main controller.",
+            startedAt,
+            DateTimeOffset.UtcNow,
+            true,
+            new Dictionary<string, object?>
+            {
+                ["communication"] = BuildCoolingCommunication(steps)
+            });
+    }
     public Task<DeviceCommandResult> QueryLisAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> SetTemperatureAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
 
@@ -513,7 +574,91 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
 
     private sealed record CoolingStep(string Name, bool Ok, string Status, string? ErrorCode, string Message, byte[] RequestBytes, byte[] ResponseBytes);
 
-    public Task<DeviceCommandResult> RunPumpAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
+    // Real 模式清洗泵 PWM 写：照 SetCoolingAsync 范本下发主控 0x07（TL_PWM_SET_ID_SET_VALUE 0x07/0x02 单通道、
+    // TL_PWM_SET_ALL_SET_VALUE 0x07/0x04 全通道）。pwm0~3 对应通道0~3 清洗泵；值 -100~100（INT16 小端）。
+    // 其余泵 action 仍 RejectAsync fail-closed。
+    public async Task<DeviceCommandResult> RunPumpAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var steps = new List<CoolingStep>();
+
+        byte[] requestBytes;
+        byte expectedSub;
+        string operation;
+        if (string.Equals(request.Action, "set-pwm", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!TryConvertToInt32(request.Parameters.GetValueOrDefault("pwmId"), out var pwmId) || pwmId < 0 || pwmId > 3)
+            {
+                return CoolingFail(request, startedAt, "pwm_id_missing", "PWM id (pwmId 0..3) is required for set-pwm.", steps);
+            }
+            if (!TryConvertToInt32(request.Parameters.GetValueOrDefault("value"), out var value) || value < -100 || value > 100)
+            {
+                return CoolingFail(request, startedAt, "pwm_value_out_of_range", "PWM value (value -100..100) is required for set-pwm.", steps);
+            }
+            requestBytes = MainControllerProtocol.BuildSetPwmValueRequest((byte)pwmId, (short)value);
+            expectedSub = MainControllerProtocol.PwmSetIdValueSub;
+            operation = "set-wash-pwm-single";
+        }
+        else if (string.Equals(request.Action, "set-all-pwm", StringComparison.OrdinalIgnoreCase))
+        {
+            var values = new short[4];
+            for (var index = 0; index < 4; index++)
+            {
+                if (!TryConvertToInt32(request.Parameters.GetValueOrDefault($"pwm{index}"), out var value) || value < -100 || value > 100)
+                {
+                    return CoolingFail(request, startedAt, "pwm_value_out_of_range", $"pwm{index} (-100..100) is required for set-all-pwm.", steps);
+                }
+                values[index] = (short)value;
+            }
+            requestBytes = MainControllerProtocol.BuildSetAllPwmValuesRequest(values);
+            expectedSub = MainControllerProtocol.PwmSetAllValueSub;
+            operation = "set-wash-pwm-all";
+        }
+        else
+        {
+            return await RejectAsync(request);
+        }
+
+        var exchange = await ExchangeMainControllerAsync(
+            operation,
+            requestBytes,
+            MainControllerProtocol.PwmClass,
+            expectedSub,
+            frame =>
+            {
+                if (expectedSub == MainControllerProtocol.PwmSetIdValueSub)
+                {
+                    MainControllerProtocol.ParsePwmSetIdValueAck(frame);
+                }
+                else
+                {
+                    MainControllerProtocol.ParsePwmSetAllAck(frame);
+                }
+                return true;
+            },
+            cancellationToken);
+        steps.Add(Step(operation, exchange));
+
+        if (!exchange.Ok)
+        {
+            return CoolingFail(request, startedAt, exchange.ErrorCode ?? "wash_pwm_write_failed", exchange.Message, steps);
+        }
+
+        return new DeviceCommandResult(
+            true,
+            DeviceCommandStatuses.Succeeded,
+            request.ModuleCode,
+            request.Action,
+            null,
+            "Wash PWM command was accepted by the main controller.",
+            startedAt,
+            DateTimeOffset.UtcNow,
+            true,
+            new Dictionary<string, object?>
+            {
+                ["communication"] = BuildCoolingCommunication(steps)
+            });
+    }
     public Task<DeviceCommandResult> ReadLiquidLevelsAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> MixAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> MoveRobotAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);

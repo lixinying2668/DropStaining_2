@@ -134,3 +134,5 @@ data/communication-patch-migration.db*
 /bridges/Stainer.SoconBridge/bin/
 /bridges/Stainer.SoconBridge/obj/
 .omc/
+
+.claude

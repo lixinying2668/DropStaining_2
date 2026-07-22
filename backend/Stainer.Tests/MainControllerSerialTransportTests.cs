@@ -643,6 +643,91 @@ public sealed class MainControllerSerialTransportTests
     }
 
     [Fact]
+    public async Task Exchange_allows_reagent_qr_start_and_reset_scan_commands()
+    {
+        foreach (var request in new[] { MainControllerProtocol.BuildQrStartScanRequest(), MainControllerProtocol.BuildQrResetScanRequest() })
+        {
+            var subClass = IceImmunoSerialProtocol.DecodeFrame(request).SubClass;
+            var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+                MainControllerProtocol.QrClass,
+                subClass,
+                IceImmunoSerialProtocol.ResponseType,
+                [0x01]);
+            var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+            var transport = CreateTransport(port);
+
+            var result = await transport.ExchangeAsync(
+                new DeviceByteTransportRequest(DeviceByteTransportEndpoints.MainController, "reagent-qr", request));
+
+            Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+            Assert.True(port.OpenCalled);
+            Assert.Single(port.WriteCalls);
+        }
+    }
+
+    [Fact]
+    public async Task Exchange_rejects_unapproved_reagent_qr_subclass_without_writing()
+    {
+        // 0x08/0x99 不在白名单：不得发字节、不得开端口。
+        var request = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.QrClass, 0x99);
+        var port = FakeMainControllerSerialPort.FromBytes([]);
+        var transport = CreateTransport(port);
+
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(DeviceByteTransportEndpoints.MainController, "reagent-qr-bad", request));
+
+        Assert.NotEqual(DeviceByteTransportStatuses.Succeeded, result.Status);
+        Assert.False(port.OpenCalled);
+    }
+
+    [Fact]
+    public async Task Exchange_allows_wash_pwm_single_and_all_write_commands()
+    {
+        // 单通道 0x07/0x02
+        var singleResponse = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.PwmClass,
+            MainControllerProtocol.PwmSetIdValueSub,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01, 0x01]);
+        var singlePort = FakeMainControllerSerialPort.FromBytes(singleResponse);
+        var singleRequest = MainControllerProtocol.BuildSetPwmValueRequest(1, 60);
+        var singleResult = await CreateTransport(singlePort).ExchangeAsync(
+            new DeviceByteTransportRequest(DeviceByteTransportEndpoints.MainController, "set-wash-pwm", singleRequest));
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, singleResult.Status);
+        Assert.True(singlePort.OpenCalled);
+
+        // 全通道 0x07/0x04
+        var allResponse = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.PwmClass,
+            MainControllerProtocol.PwmSetAllValueSub,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01]);
+        var allPort = FakeMainControllerSerialPort.FromBytes(allResponse);
+        var allRequest = MainControllerProtocol.BuildSetAllPwmValuesRequest(new short[] { 10, 20, -30, 0 });
+        var allResult = await CreateTransport(allPort).ExchangeAsync(
+            new DeviceByteTransportRequest(DeviceByteTransportEndpoints.MainController, "set-wash-pwm-all", allRequest));
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, allResult.Status);
+    }
+
+    [Fact]
+    public async Task Exchange_rejects_invalid_wash_pwm_payload_without_writing()
+    {
+        // pwmId=4 越界（>3）：白名单须拒绝，不发字节、不开端口。
+        var request = IceImmunoSerialProtocol.BuildRequestFrame(
+            MainControllerProtocol.PwmClass,
+            MainControllerProtocol.PwmSetIdValueSub,
+            [0x04, 0x00, 0x00]);
+        var port = FakeMainControllerSerialPort.FromBytes([]);
+        var transport = CreateTransport(port);
+
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(DeviceByteTransportEndpoints.MainController, "wash-pwm-bad", request));
+
+        Assert.NotEqual(DeviceByteTransportStatuses.Succeeded, result.Status);
+        Assert.False(port.OpenCalled);
+    }
+
+    [Fact]
     public async Task Exchange_allows_cooling_switch_write_with_valid_zero_or_one_payload()
     {
         foreach (var enabled in new[] { true, false })
@@ -699,7 +784,7 @@ public sealed class MainControllerSerialTransportTests
     [InlineData(0x05, 0x04, new byte[] { 0x00, 0x01, 0x00 })]
     [InlineData(0x07, 0x06, new byte[] { })]
     [InlineData(0x0A, 0x02, new byte[] { 0x00 })]
-    [InlineData(0x08, 0x06, new byte[] { })]
+    [InlineData(0x08, 0x09, new byte[] { })]  // QR 未批准 subclass（0x08/0x04、0x08/0x05、0x08/0x06、0x08/0x01 已放行）
     public async Task Exchange_rejects_control_or_unapproved_commands_without_opening_port(
         byte parentClass,
         byte subClass,

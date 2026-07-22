@@ -277,6 +277,147 @@ public sealed class OfflineRealDeviceAdapterTests
         Assert.Single(fake.ExchangeRequests);
     }
 
+    [Fact]
+    public async Task ScanReagentAsync_start_scan_writes_qr_start_frame_and_confirms_ack()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(
+            MainControllerProtocol.BuildQrStartScanRequest(),
+            Response(MainControllerProtocol.QrClass, MainControllerProtocol.QrStartScanSub, [0x01]));
+
+        var result = await adapter.ScanReagentAsync(RequestFor(DeviceModules.ReagentScanner, ReagentQrCommands.StartScan));
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(DeviceCommandStatuses.Succeeded, result.Status);
+        Assert.True(result.Acknowledged);
+        Assert.Single(fake.ExchangeRequests);
+        Assert.All(fake.ExchangeRequests, request => Assert.Equal(DeviceByteTransportEndpoints.MainController, request.Endpoint));
+
+        // 线上帧必须是 0x08/0x04 空 payload（启动试剂扫码），不是 DCR55 或带数据。
+        var frame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal(MainControllerProtocol.QrClass, frame.ParentClass);
+        Assert.Equal(MainControllerProtocol.QrStartScanSub, frame.SubClass);
+        Assert.Empty(frame.Payload);
+    }
+
+    [Fact]
+    public async Task ScanReagentAsync_reset_scan_writes_qr_reset_frame_and_confirms_ack()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(
+            MainControllerProtocol.BuildQrResetScanRequest(),
+            Response(MainControllerProtocol.QrClass, MainControllerProtocol.QrResetScanSub, [0x01]));
+
+        var result = await adapter.ScanReagentAsync(RequestFor(DeviceModules.ReagentScanner, ReagentQrCommands.ResetScan));
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(DeviceCommandStatuses.Succeeded, result.Status);
+        Assert.True(result.Acknowledged);
+        var frame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal(MainControllerProtocol.QrResetScanSub, frame.SubClass);
+        Assert.Empty(frame.Payload);
+    }
+
+    [Theory]
+    [InlineData("reagent.stateChanged")]   // 试剂状态通知（ReagentHardwareSink 用）须保持 fail-closed，不误触发扫码
+    [InlineData("TL_QR_GET_TEXT")]
+    [InlineData("unknown")]
+    public async Task ScanReagentAsync_rejects_non_start_reset_actions_without_io(string action)
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+
+        var result = await adapter.ScanReagentAsync(RequestFor(DeviceModules.ReagentScanner, action));
+
+        Assert.False(result.Ok);
+        Assert.Equal(DeviceCommandStatuses.NotSupported, result.Status);
+        Assert.Empty(fake.ExchangeRequests); // 未发送任何字节
+    }
+
+    [Fact]
+    public async Task RunPumpAsync_set_pwm_writes_single_channel_frame_and_confirms_ack()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(
+            MainControllerProtocol.BuildSetPwmValueRequest(1, 60),
+            Response(MainControllerProtocol.PwmClass, MainControllerProtocol.PwmSetIdValueSub, [0x01, 0x01]));
+
+        var result = await adapter.RunPumpAsync(PumpRequest("set-pwm", 1, 60));
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(DeviceCommandStatuses.Succeeded, result.Status);
+        Assert.True(result.Acknowledged);
+        Assert.Single(fake.ExchangeRequests);
+        var frame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal(MainControllerProtocol.PwmClass, frame.ParentClass);
+        Assert.Equal(MainControllerProtocol.PwmSetIdValueSub, frame.SubClass);
+        // 线上 payload 必须是 [pwmId=1][value=60 int16 LE = 3C 00]。
+        Assert.Equal<byte>([0x01, 0x3C, 0x00], frame.Payload);
+    }
+
+    [Fact]
+    public async Task RunPumpAsync_set_all_pwm_writes_four_channel_frame_and_confirms_ack()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(
+            MainControllerProtocol.BuildSetAllPwmValuesRequest(new short[] { 10, 20, -30, 0 }),
+            Response(MainControllerProtocol.PwmClass, MainControllerProtocol.PwmSetAllValueSub, [0x01]));
+
+        var result = await adapter.RunPumpAsync(PumpAllRequest("set-all-pwm", new[] { 10, 20, -30, 0 }));
+
+        Assert.True(result.Ok, result.Message);
+        Assert.True(result.Acknowledged);
+        var frame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal(MainControllerProtocol.PwmSetAllValueSub, frame.SubClass);
+        Assert.Equal(8, frame.Payload.Length);
+        // [10=0A 00][20=14 00][-30=E2 FF][0=00 00]
+        Assert.Equal<byte>([0x0A, 0x00, 0x14, 0x00, 0xE2, 0xFF, 0x00, 0x00], frame.Payload);
+    }
+
+    [Theory]
+    [InlineData("drain")]
+    [InlineData("detox")]
+    [InlineData("unknown")]
+    public async Task RunPumpAsync_rejects_non_pwm_actions_without_io(string action)
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+
+        var result = await adapter.RunPumpAsync(RequestFor(DeviceModules.Pump, action));
+
+        Assert.False(result.Ok);
+        Assert.Equal(DeviceCommandStatuses.NotSupported, result.Status);
+        Assert.Empty(fake.ExchangeRequests);
+    }
+
+    private static DeviceOperationRequest PumpRequest(string action, int pwmId, int value) =>
+        new(
+            new DeviceCommandContext($"cmd-pwm-{action}-{pwmId}-{value}", null, "test", nameof(OfflineRealDeviceAdapterTests)),
+            DeviceModules.Pump,
+            action,
+            new Dictionary<string, object?>
+            {
+                ["pwmId"] = pwmId,
+                ["value"] = value
+            });
+
+    private static DeviceOperationRequest PumpAllRequest(string action, int[] values) =>
+        new(
+            new DeviceCommandContext($"cmd-pwm-{action}", null, "test", nameof(OfflineRealDeviceAdapterTests)),
+            DeviceModules.Pump,
+            action,
+            new Dictionary<string, object?>
+            {
+                ["pwm0"] = values[0],
+                ["pwm1"] = values[1],
+                ["pwm2"] = values[2],
+                ["pwm3"] = values[3]
+            });
+
     private static DeviceOperationRequest CoolingRequest(int targetDeciC, bool isEnabled) =>
         new(
             new DeviceCommandContext($"cmd-cooling-{targetDeciC}-{isEnabled}", null, "test", nameof(OfflineRealDeviceAdapterTests)),
@@ -311,7 +452,7 @@ public sealed class OfflineRealDeviceAdapterTests
             RequestFor(DeviceModules.LiquidLevel, "write-io"),
             RequestFor(DeviceModules.Pump, "drain"),
             RequestFor(DeviceModules.Pump, "detox"),
-            RequestFor(DeviceModules.ReagentScanner, ReagentQrCommands.StartScan),
+            RequestFor(DeviceModules.ReagentScanner, ReagentQrCommands.GetText), // 试剂扫码启动/复位已真发字节；此处用非扫码 action 验证其余试剂 action 仍 reject
             RequestFor(DeviceModules.SampleScanner, "trigger"),
             RequestFor(DeviceModules.Workflow, "execute")
         };
