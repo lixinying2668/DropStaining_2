@@ -186,6 +186,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             DeviceFaultMutationResponse x => x with { Replayed = true } as T ?? response,
             ThermalMutationResponse x => x with { Replayed = true } as T ?? response,
             FluidicsMutationResponse x => x with { Replayed = true } as T ?? response,
+            WaterSupplyMutationResponse x => x with { Replayed = true } as T ?? response,
             DatabaseBackupResponse x => x with { Replayed = true } as T ?? response,
             DatabaseRestoreResponse x => x with { Replayed = true } as T ?? response,
             EngineeringSessionResponse x => x with { Replayed = true } as T ?? response,

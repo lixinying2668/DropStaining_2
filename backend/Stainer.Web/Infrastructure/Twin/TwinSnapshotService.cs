@@ -477,6 +477,28 @@ public sealed class TwinSnapshotService
             ? DeciC(Get(TwinSqlite.One(connection, "SELECT MAX(target_temperature_deci_c) AS v FROM thermal_point_states"), "v"))
             : null;
 
+        // 供水孔（water_supply_channel_states）：每个染色通道 1..4 独立的进/出水温度、水量、流速、开关、状态。
+        if (TwinSqlite.HasColumns(connection, "water_supply_channel_states", "channel_no", "inlet_temperature_deci_c", "outlet_target_temperature_deci_c", "outlet_temperature_deci_c", "outlet_volume_ml", "outlet_flow_rate_ml_per_minute", "outlet_enabled", "status"))
+        {
+            foreach (var row in TwinSqlite.Many(connection, "SELECT * FROM water_supply_channel_states"))
+            {
+                var channelNo = Int(Get(row, "channel_no"));
+                if (channelNo is null || channelNo < 1 || channelNo > 4)
+                {
+                    continue;
+                }
+
+                var prefix = $"water_ch{channelNo}";
+                scalars[$"{prefix}_inlet_temp_c"] = DeciC(Get(row, "inlet_temperature_deci_c"));
+                scalars[$"{prefix}_outlet_target_temp_c"] = DeciC(Get(row, "outlet_target_temperature_deci_c"));
+                scalars[$"{prefix}_outlet_temp_c"] = DeciC(Get(row, "outlet_temperature_deci_c"));
+                scalars[$"{prefix}_outlet_volume_ml"] = Get(row, "outlet_volume_ml");
+                scalars[$"{prefix}_flow_ml_per_min"] = Get(row, "outlet_flow_rate_ml_per_minute");
+                scalars[$"{prefix}_outlet_enabled"] = Get(row, "outlet_enabled");
+                scalars[$"{prefix}_status"] = Get(row, "status");
+            }
+        }
+
         scalars["reagent_bottle_capacity_ml"] = TwinSqlite.TableExists(connection, "reagent_bottles")
             ? RoundDiv(Get(TwinSqlite.One(connection, "SELECT MAX(initial_volume_ul) AS v FROM reagent_bottles"), "v"), 1000.0, 1)
             : null;

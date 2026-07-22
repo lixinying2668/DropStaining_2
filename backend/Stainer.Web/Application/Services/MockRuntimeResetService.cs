@@ -55,6 +55,7 @@ public sealed class MockRuntimeResetService(
         "dab_batch_usages",              // → staining_tasks(Restrict) [5961-5964] 必须在 staining_tasks 之前
         "temperature_telemetry",         // 无 FK
         "fluidics_telemetry",            // 无 FK
+        "water_supply_telemetry",        // 无 FK
         "sample_scan_items",             // → sample_scan_sessions(Cascade IsRequired) [6405-6414]
         "reagent_scan_items",            // → reagent_scan_sessions(Cascade IsRequired) [6376-6393]
         "reagent_rack_placements",       // → reagent_bottles(Cascade IsRequired) [6319-6325]
@@ -163,6 +164,7 @@ public sealed class MockRuntimeResetService(
                     reset += await RestorePumpChannelStatesAsync(cancellationToken);
                     reset += await RestoreMixerChannelStatesAsync(cancellationToken);
                     reset += await RestoreLiquidContainerStatesAsync(cancellationToken);
+                    reset += await RestoreWaterSupplyChannelStatesAsync(cancellationToken);
                     reset += await RestoreRobotArmStatesAsync(cancellationToken);
                     reset += await RestoreNeedleStatesAsync(cancellationToken);
                     reset += await RestoreDabMixPositionsAsync(cancellationToken);
@@ -391,6 +393,40 @@ public sealed class MockRuntimeResetService(
         return total;
     }
 
+    private Task<int> RestoreWaterSupplyChannelStatesAsync(CancellationToken cancellationToken)
+    {
+        // 4 个通道（CH1..CH4）基线相同：温度/水量/流速/开关/状态恢复为 seeder 初始值，
+        // channel_no/channel_code 不变，fault/command 字段清空。
+        return dbContext.Database.ExecuteSqlRawAsync(
+            """
+            UPDATE water_supply_channel_states
+            SET inlet_temperature_deci_c = @p0,
+                outlet_target_temperature_deci_c = @p1,
+                outlet_temperature_deci_c = @p2,
+                outlet_volume_ml = @p3,
+                outlet_flow_rate_ml_per_minute = @p4,
+                outlet_enabled = @p5,
+                status = @p6,
+                is_connected = @p7,
+                current_command_id = NULL,
+                fault_code = NULL,
+                fault_message = NULL,
+                updated_at_utc = @p8
+            """,
+            [
+                MockDeviceBaseline.WaterInletTemperatureDeciC,
+                MockDeviceBaseline.WaterOutletTargetTemperatureDeciC,
+                MockDeviceBaseline.WaterOutletTemperatureDeciC,
+                MockDeviceBaseline.WaterOutletVolumeMl,
+                MockDeviceBaseline.WaterOutletFlowRateMlPerMinute,
+                MockDeviceBaseline.WaterOutletEnabled,
+                MockDeviceBaseline.WaterStatus,
+                MockDeviceBaseline.WaterIsConnected,
+                DateTimeOffset.UtcNow,
+            ],
+            cancellationToken);
+    }
+
     private Task<int> RestoreRobotArmStatesAsync(CancellationToken cancellationToken)
     {
         return dbContext.Database.ExecuteSqlRawAsync(
@@ -483,7 +519,8 @@ public sealed class MockRuntimeResetService(
                 'LisQueryLog','MockRuntime','ThermalPointState','CoolingUnitState',
                 'PumpChannelState','MixerChannelState','LiquidContainerState',
                 'RobotArmState','NeedleState','DabMixPosition','DeviceFault',
-                'TemperatureTelemetry','FluidicsTelemetry')
+                'TemperatureTelemetry','FluidicsTelemetry',
+                'WaterSupplyChannelState','WaterSupplyTelemetry')
                OR action LIKE 'run.%'
                OR action LIKE 'resource.%'
                OR action LIKE 'sample.%'
@@ -498,6 +535,7 @@ public sealed class MockRuntimeResetService(
                OR action LIKE 'task.create%'
                OR action LIKE 'dab.%'
                OR action LIKE 'fluidics.%'
+               OR action LIKE 'water_supply.%'
                OR action LIKE 'thermal.point.%'
                OR action LIKE 'alarm.%'
                OR action LIKE 'device.communication.%'

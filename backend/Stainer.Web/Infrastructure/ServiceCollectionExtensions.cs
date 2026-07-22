@@ -110,6 +110,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ScannerControlService>();
         services.AddScoped<ThermalControlService>();
         services.AddScoped<FluidicsControlService>();
+        services.AddScoped<WaterSupplyControlService>();
         services.AddScoped<MotionControlService>();
         services.AddScoped<DeviceInitializationService>();
         services.AddScoped<DevicePrecheckService>();

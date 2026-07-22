@@ -126,3 +126,34 @@ public sealed record ClearFluidicsFaultRequest(
     string? PwmChannelCode = null,
     string? DrawerCode = null,
     string? SourceType = null);
+
+// 供水孔 / 供水模块（water_supply_channel_states）：与 /api/fluidics/* 语义不同，独立温/流/量/开关。
+public sealed record SetWaterSupplyTargetTemperatureRequest(
+    string CommandId,
+    int TargetTemperatureDeciC,
+    string Reason);
+
+public sealed record SetWaterSupplyFlowRequest(
+    string CommandId,
+    int FlowRateMlPerMinute,
+    string Reason);
+
+public sealed record SetWaterSupplyOutletRequest(
+    string CommandId,
+    bool Enabled,
+    string Reason,
+    int? DurationMs = null);
+
+public sealed record ConfigureWaterSupplyFaultRequest(
+    string CommandId,
+    int ChannelNo,
+    string FaultType,
+    string Reason,
+    string? ErrorCode = null,
+    string? Message = null);
+
+public sealed record ClearWaterSupplyFaultRequest(
+    string CommandId,
+    int ChannelNo,
+    string Reason);
+

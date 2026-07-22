@@ -40,6 +40,21 @@ public sealed class FluidicsControlService(
         }
     }
 
+    // 启动期公开入口：仅幂等补齐泵/混匀/液位容器基线（供 SystemWater 等容器在首次 API 调用前就存在），
+    // 不推进模拟。供 Program.cs 启动初始化调用，避免空库首次操作（如供水孔扣减 SystemWater）时容器缺失。
+    public async Task EnsureSeededAsync(CancellationToken cancellationToken = default)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<FluidicsTelemetryResponse>> ListTelemetryAsync(int take, CancellationToken cancellationToken = default)
     {
         take = Math.Clamp(take, 1, 1000);

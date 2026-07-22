@@ -154,6 +154,48 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.ClearFaultAsync(request, actor, cancellationToken));
             }));
+        app.MapGet("/api/water-supply/state", async (HttpContext context, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.GetStateAsync(cancellationToken));
+            }));
+        app.MapGet("/api/water-supply/channels/{channelNo:int}", async (HttpContext context, int channelNo, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.GetChannelAsync(channelNo, cancellationToken));
+            }));
+        app.MapPost("/api/water-supply/channels/{channelNo:int}/target-temperature", async (HttpContext context, int channelNo, SetWaterSupplyTargetTemperatureRequest request, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.SetTargetTemperatureAsync(channelNo, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/water-supply/channels/{channelNo:int}/flow", async (HttpContext context, int channelNo, SetWaterSupplyFlowRequest request, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.SetFlowAsync(channelNo, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/water-supply/channels/{channelNo:int}/outlet", async (HttpContext context, int channelNo, SetWaterSupplyOutletRequest request, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.SetOutletAsync(channelNo, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/water-supply/faults", async (HttpContext context, ConfigureWaterSupplyFaultRequest request, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.ConfigureFaultAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/water-supply/faults/clear", async (HttpContext context, ClearWaterSupplyFaultRequest request, UserSessionService sessionService, WaterSupplyControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.ClearFaultAsync(request, actor, cancellationToken));
+            }));
         app.MapPost("/api/device/mock-faults", async (HttpContext context, ConfigureMockDeviceFaultRequest request, UserSessionService sessionService, DeviceControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

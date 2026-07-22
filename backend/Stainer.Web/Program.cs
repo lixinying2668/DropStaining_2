@@ -131,6 +131,10 @@ using (var scope = app.Services.CreateScope())
     // 使 /api/twin/snapshot 在首次空库启动时也能稳定返回温控点，而非依赖 thermal API 被首次调用。
     var thermalControl = scope.ServiceProvider.GetRequiredService<ThermalControlService>();
     await thermalControl.EnsureSeededAsync(CancellationToken.None);
+    // 预 seed 4 个供水孔（CH1..CH4），使 /api/water-supply/state 与 twin snapshot 首次空库即可稳定返回。
+    await scope.ServiceProvider.GetRequiredService<WaterSupplyControlService>().EnsureSeededAsync(CancellationToken.None);
+    // 预 seed 液路容器（SystemWater/PBS/Waste/ToxicWaste），避免空库首次打开供水孔时 SystemWater 容器缺失导致扣减丢失。
+    await scope.ServiceProvider.GetRequiredService<FluidicsControlService>().EnsureSeededAsync(CancellationToken.None);
 }
 
 app.Services.GetRequiredService<StartupDeviceInitializationRunner>()

@@ -3304,9 +3304,131 @@ function showWaterModuleDetail(channelId, point={}) {
   box.innerHTML = `<div class="scanner-detail-title"><strong>通道${channelId}供水孔 / 供水模块控制</strong><span class="engineering-pill">svg-port-clean-channel-${channelId}</span></div>
     <div>通道进度：${Math.round(channels[channelId-1]?.progress || 0)}%　位置：X ${Number(point.x ?? 0).toFixed(1)} / Y ${Number(point.y ?? 0).toFixed(1)}</div>
     <div class="object-engineering-panel" id="svg-port-clean-channel-${channelId}-object-engineering" data-control-id="svg-port-clean-channel-${channelId}-object-engineering">
-      <section class="object-engineering-card" id="waterModuleChannel${channelId}Card" data-control-id="waterModuleChannel${channelId}Card"><strong>供水模块控制<span class="engineering-pill">通道${channelId}</span></strong><div class="object-form-grid three"><label>进水温度<input id="waterChannel${channelId}InletTempInput" data-control-id="waterChannel${channelId}InletTempInput" value="25℃"></label><label>出水目标温度<input id="waterChannel${channelId}OutletTargetTempInput" data-control-id="waterChannel${channelId}OutletTargetTempInput" value="45℃"></label><label>出水温度<input id="waterChannel${channelId}OutletTempInput" data-control-id="waterChannel${channelId}OutletTempInput" value="25℃"></label><label>出水水量<input id="waterChannel${channelId}OutletVolumeInput" data-control-id="waterChannel${channelId}OutletVolumeInput" value="2500mL"></label><label>出水流速<input id="waterChannel${channelId}OutletFlowInput" data-control-id="waterChannel${channelId}OutletFlowInput" value="250mL/min"></label><label>出水开关<select id="waterChannel${channelId}OutletSwitchSelect" data-control-id="waterChannel${channelId}OutletSwitchSelect"><option>关闭</option><option>打开</option></select></label></div><div class="object-actions"><button type="button" data-object-action="查询进水温度" data-object-name="通道${channelId}供水孔">查询进水温度</button><button type="button" data-object-action="查询出水温度" data-object-name="通道${channelId}供水孔">查询出水温度</button><button type="button" data-object-action="查询出水目标温度" data-object-name="通道${channelId}供水孔">查询目标温度</button><button type="button" data-object-action="查询出水水量" data-object-name="通道${channelId}供水孔">查询水量</button><button type="button" data-object-action="查询出水流速" data-object-name="通道${channelId}供水孔">查询流速</button><button type="button" class="primary-lite" data-object-action="切换出水开关" data-object-name="通道${channelId}供水孔">出水开关</button></div><div class="object-note">该区由原“配置 → 清洗混匀 → 供水模块控制”迁移而来，通过点击染色区 4 个供水/清洗孔进入。</div></section>
+      <section class="object-engineering-card" id="waterModuleChannel${channelId}Card" data-control-id="waterModuleChannel${channelId}Card"><strong>供水模块控制<span class="engineering-pill">通道${channelId}</span></strong><div class="object-form-grid three"><label>进水温度<input id="waterChannel${channelId}InletTempInput" data-control-id="waterChannel${channelId}InletTempInput" value="25℃"></label><label>出水目标温度<input id="waterChannel${channelId}OutletTargetTempInput" data-control-id="waterChannel${channelId}OutletTargetTempInput" value="45℃"></label><label>出水温度<input id="waterChannel${channelId}OutletTempInput" data-control-id="waterChannel${channelId}OutletTempInput" value="25℃"></label><label>出水水量<input id="waterChannel${channelId}OutletVolumeInput" data-control-id="waterChannel${channelId}OutletVolumeInput" value="2500mL"></label><label>出水流速<input id="waterChannel${channelId}OutletFlowInput" data-control-id="waterChannel${channelId}OutletFlowInput" value="250mL/min"></label><label>出水开关<select id="waterChannel${channelId}OutletSwitchSelect" data-control-id="waterChannel${channelId}OutletSwitchSelect"><option>关闭</option><option>打开</option></select></label></div><div class="object-actions"><button type="button" data-object-action="查询进水温度" data-object-name="通道${channelId}供水孔">查询进水温度</button><button type="button" data-object-action="查询出水温度" data-object-name="通道${channelId}供水孔">查询出水温度</button><button type="button" data-object-action="查询出水目标温度" data-object-name="通道${channelId}供水孔">查询目标温度</button><button type="button" class="ok-lite" data-object-action="设置出水目标温度" data-object-name="通道${channelId}供水孔">设置目标温度</button><button type="button" data-object-action="查询出水水量" data-object-name="通道${channelId}供水孔">查询水量</button><button type="button" data-object-action="查询出水流速" data-object-name="通道${channelId}供水孔">查询流速</button><button type="button" class="ok-lite" data-object-action="设置出水流速" data-object-name="通道${channelId}供水孔">设置流速</button><button type="button" class="primary-lite" data-object-action="切换出水开关" data-object-name="通道${channelId}供水孔">出水开关</button></div><div class="object-note">该区由原“配置 → 清洗混匀 → 供水模块控制”迁移而来，通过点击染色区 4 个供水/清洗孔进入。</div></section>
     </div>`;
+  bindWaterSupplyControls(box, channelId);
   bindGenericObjectActionButtons(box);
+}
+
+// ===== 供水孔 / 供水模块控制：对象详情按钮对接后端 water-supply API（不再走通用模拟日志） =====
+// 业务语义独立于 /api/fluidics/wash：每个供水孔有自己的温/流/量/开关状态。
+const WATER_TEMP_MIN_C = 0, WATER_TEMP_MAX_C = 100;
+const WATER_FLOW_MIN = 0, WATER_FLOW_MAX = 5000;
+const WATER_SUPPLY_QUERY_ACTIONS = new Set(['查询进水温度','查询出水温度','查询出水目标温度','查询出水水量','查询出水流速']);
+function parseWaterCelsius(raw) {
+  const match = raw == null ? null : String(raw).trim().match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : NaN;
+}
+function formatWaterCelsius(deciC) {
+  const v = Number(deciC);
+  return Number.isFinite(v) ? (v / 10).toFixed(1) + '℃' : '—';
+}
+function parseWaterFlowMl(raw) {
+  const match = raw == null ? null : String(raw).trim().match(/\d+(\.\d+)?/);
+  return match ? Number(match[0]) : NaN;
+}
+function formatWaterFlowMl(mlPerMin) {
+  const v = Number(mlPerMin);
+  return Number.isFinite(v) ? v + 'mL/min' : '—';
+}
+function formatWaterVolumeMl(ml) {
+  const v = Number(ml);
+  return Number.isFinite(v) ? v + 'mL' : '—';
+}
+async function fetchWaterSupplyChannel(channelId) {
+  return await backendApi(`/api/water-supply/channels/${channelId}`);
+}
+function applyWaterSupplyInputs(channelId, ch) {
+  if(!ch) return;
+  const inlet = document.getElementById(`waterChannel${channelId}InletTempInput`);
+  const target = document.getElementById(`waterChannel${channelId}OutletTargetTempInput`);
+  const outlet = document.getElementById(`waterChannel${channelId}OutletTempInput`);
+  const volume = document.getElementById(`waterChannel${channelId}OutletVolumeInput`);
+  const flow = document.getElementById(`waterChannel${channelId}OutletFlowInput`);
+  const sw = document.getElementById(`waterChannel${channelId}OutletSwitchSelect`);
+  if(inlet) inlet.value = formatWaterCelsius(ch.inletTemperatureDeciC);
+  if(target) target.value = formatWaterCelsius(ch.outletTargetTemperatureDeciC);
+  if(outlet) outlet.value = formatWaterCelsius(ch.outletTemperatureDeciC);
+  if(volume) volume.value = formatWaterVolumeMl(ch.outletVolumeMl);
+  if(flow) flow.value = formatWaterFlowMl(ch.outletFlowRateMlPerMinute);
+  if(sw) sw.value = ch.outletEnabled ? '打开' : '关闭';
+}
+function handleWaterSupplyError(err) {
+  if(err && err.status === 401) { routeWriteError(err); return; }
+  log('供水孔控制失败：' + ((err && err.message) || '未知错误'), 'err');
+  routeWriteError(err);
+}
+async function refreshWaterSupplyAfterWrite(channelId) {
+  // 先刷 DB 快照（SVG/KPI/标量），再用 water-supply 通道详情覆写输入框，避免快照覆盖刚写入的值
+  if(typeof loadDatabaseSnapshot === 'function') { try { await loadDatabaseSnapshot(); } catch(_) {} }
+  applyWaterSupplyInputs(channelId, await fetchWaterSupplyChannel(channelId));
+}
+function bindWaterSupplyControls(box, channelId) {
+  if(!box || typeof box.querySelectorAll !== 'function') return;
+  // 进入详情页自动回填一次（GET /api/water-supply/channels/{channelId}）
+  fetchWaterSupplyChannel(channelId).then(ch => applyWaterSupplyInputs(channelId, ch)).catch(handleWaterSupplyError);
+  box.querySelectorAll('[data-object-action]').forEach(btn => {
+    const action = btn.getAttribute('data-object-action') || '';
+    if(btn.dataset.objectActionBound === 'true') return;
+    btn.dataset.objectActionBound = 'true';
+    btn.addEventListener('click', async () => {
+      flashControl(btn);
+      try {
+        if(WATER_SUPPLY_QUERY_ACTIONS.has(action)) {
+          const ch = await fetchWaterSupplyChannel(channelId);
+          await refreshWaterSupplyAfterWrite(channelId); // 含 loadDatabaseSnapshot + 回填
+          const seg = {
+            '查询进水温度': () => `进水温度 ${formatWaterCelsius(ch.inletTemperatureDeciC)}`,
+            '查询出水温度': () => `出水温度 ${formatWaterCelsius(ch.outletTemperatureDeciC)}`,
+            '查询出水目标温度': () => `出水目标温度 ${formatWaterCelsius(ch.outletTargetTemperatureDeciC)}`,
+            '查询出水水量': () => `出水水量 ${formatWaterVolumeMl(ch.outletVolumeMl)}`,
+            '查询出水流速': () => `出水流速 ${formatWaterFlowMl(ch.outletFlowRateMlPerMinute)}`
+          }[action]?.() || '';
+          log(`通道${channelId}供水孔查询：${seg} / 开关 ${ch.outletEnabled ? '打开' : '关闭'} / 状态 ${ch.status || '—'}`, 'ok', channelId);
+          return;
+        }
+        if(action === '设置出水目标温度') {
+          const input = document.getElementById(`waterChannel${channelId}OutletTargetTempInput`);
+          const celsius = parseWaterCelsius(input ? input.value : '');
+          if(!Number.isFinite(celsius) || celsius < WATER_TEMP_MIN_C || celsius > WATER_TEMP_MAX_C) {
+            log(`供水孔：目标温度解析失败或超出 ${WATER_TEMP_MIN_C}~${WATER_TEMP_MAX_C}℃`, 'warn'); return;
+          }
+          await backendApi(`/api/water-supply/channels/${channelId}/target-temperature`, {
+            method: 'POST',
+            body: JSON.stringify({ commandId: makeCommandId('water-target'), targetTemperatureDeciC: Math.round(celsius * 10), reason: `前端设置通道${channelId}出水目标温度` })
+          });
+          log(`通道${channelId}供水孔目标温度已设置：${celsius.toFixed(1)}℃`, 'ok', channelId);
+          await refreshWaterSupplyAfterWrite(channelId);
+          return;
+        }
+        if(action === '设置出水流速') {
+          const input = document.getElementById(`waterChannel${channelId}OutletFlowInput`);
+          const flow = parseWaterFlowMl(input ? input.value : '');
+          if(!Number.isFinite(flow) || flow < WATER_FLOW_MIN || flow > WATER_FLOW_MAX) {
+            log(`供水孔：流速解析失败或超出 ${WATER_FLOW_MIN}~${WATER_FLOW_MAX}mL/min`, 'warn'); return;
+          }
+          await backendApi(`/api/water-supply/channels/${channelId}/flow`, {
+            method: 'POST',
+            body: JSON.stringify({ commandId: makeCommandId('water-flow'), flowRateMlPerMinute: Math.round(flow), reason: `前端设置通道${channelId}出水流速` })
+          });
+          log(`通道${channelId}供水孔流速已设置：${flow}mL/min`, 'ok', channelId);
+          await refreshWaterSupplyAfterWrite(channelId);
+          return;
+        }
+        if(action === '切换出水开关') {
+          const sw = document.getElementById(`waterChannel${channelId}OutletSwitchSelect`);
+          const enable = !(sw && sw.value === '打开');
+          await backendApi(`/api/water-supply/channels/${channelId}/outlet`, {
+            method: 'POST',
+            body: JSON.stringify({ commandId: makeCommandId('water-outlet'), enabled: enable, reason: `前端${enable ? '打开' : '关闭'}通道${channelId}出水开关` })
+          });
+          log(`通道${channelId}供水孔出水开关已${enable ? '打开' : '关闭'}`, 'ok', channelId);
+          await refreshWaterSupplyAfterWrite(channelId);
+          return;
+        }
+      } catch(err) { handleWaterSupplyError(err); }
+    });
+  });
 }
 function showChannelDetail(channelId) {
   const ch = channels[channelId - 1]; if(!ch) return;

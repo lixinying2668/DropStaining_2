@@ -72,6 +72,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<MixerChannelState> MixerChannelStates => Set<MixerChannelState>();
     public DbSet<LiquidContainerState> LiquidContainerStates => Set<LiquidContainerState>();
     public DbSet<FluidicsTelemetry> FluidicsTelemetry => Set<FluidicsTelemetry>();
+    public DbSet<WaterSupplyChannelState> WaterSupplyChannelStates => Set<WaterSupplyChannelState>();
+    public DbSet<WaterSupplyTelemetry> WaterSupplyTelemetry => Set<WaterSupplyTelemetry>();
     public DbSet<RobotArmState> RobotArmStates => Set<RobotArmState>();
     public DbSet<NeedleState> NeedleStates => Set<NeedleState>();
     public DbSet<PipettingOperation> PipettingOperations => Set<PipettingOperation>();
@@ -138,6 +140,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureDeviceInitialization(modelBuilder);
         ConfigureThermalState(modelBuilder);
         ConfigureFluidicsState(modelBuilder);
+        ConfigureWaterSupplyState(modelBuilder);
         ConfigureMotionState(modelBuilder);
     }
 
@@ -2317,6 +2320,52 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         telemetry.HasIndex(x => new { x.SourceType, x.SourceId, x.RecordedAtUtc });
         telemetry.HasIndex(x => x.RecordedAtUtc);
         telemetry.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
+    }
+
+    private static void ConfigureWaterSupplyState(ModelBuilder modelBuilder)
+    {
+        var channels = modelBuilder.Entity<WaterSupplyChannelState>();
+        channels.ToTable("water_supply_channel_states");
+        channels.HasKey(x => x.Id);
+        channels.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        channels.Property(x => x.ChannelNo).HasColumnName("channel_no").IsRequired();
+        channels.Property(x => x.ChannelCode).HasColumnName("channel_code").HasMaxLength(16).IsRequired();
+        channels.Property(x => x.InletTemperatureDeciC).HasColumnName("inlet_temperature_deci_c").IsRequired();
+        channels.Property(x => x.OutletTargetTemperatureDeciC).HasColumnName("outlet_target_temperature_deci_c").IsRequired();
+        channels.Property(x => x.OutletTemperatureDeciC).HasColumnName("outlet_temperature_deci_c").IsRequired();
+        channels.Property(x => x.OutletVolumeMl).HasColumnName("outlet_volume_ml").IsRequired();
+        channels.Property(x => x.OutletFlowRateMlPerMinute).HasColumnName("outlet_flow_rate_ml_per_minute").IsRequired();
+        channels.Property(x => x.OutletEnabled).HasColumnName("outlet_enabled").IsRequired();
+        channels.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        channels.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        channels.Property(x => x.CurrentCommandId).HasColumnName("current_command_id").HasMaxLength(128);
+        channels.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        channels.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
+        channels.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+        channels.HasIndex(x => x.ChannelNo).IsUnique();
+        channels.HasIndex(x => x.ChannelCode).IsUnique();
+
+        var telemetry = modelBuilder.Entity<WaterSupplyTelemetry>();
+        telemetry.ToTable("water_supply_telemetry");
+        telemetry.HasKey(x => x.Id);
+        telemetry.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        telemetry.Property(x => x.SourceId).HasColumnName("source_id").HasMaxLength(36).IsRequired();
+        telemetry.Property(x => x.ChannelNo).HasColumnName("channel_no").IsRequired();
+        telemetry.Property(x => x.ChannelCode).HasColumnName("channel_code").HasMaxLength(16).IsRequired();
+        telemetry.Property(x => x.EventType).HasColumnName("event_type").HasMaxLength(64).IsRequired();
+        telemetry.Property(x => x.InletTemperatureDeciC).HasColumnName("inlet_temperature_deci_c").IsRequired();
+        telemetry.Property(x => x.OutletTargetTemperatureDeciC).HasColumnName("outlet_target_temperature_deci_c").IsRequired();
+        telemetry.Property(x => x.OutletTemperatureDeciC).HasColumnName("outlet_temperature_deci_c").IsRequired();
+        telemetry.Property(x => x.OutletVolumeMl).HasColumnName("outlet_volume_ml").IsRequired();
+        telemetry.Property(x => x.OutletFlowRateMlPerMinute).HasColumnName("outlet_flow_rate_ml_per_minute").IsRequired();
+        telemetry.Property(x => x.OutletEnabled).HasColumnName("outlet_enabled").IsRequired();
+        telemetry.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        telemetry.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        telemetry.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128);
+        telemetry.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        telemetry.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc").IsRequired();
+        telemetry.HasIndex(x => new { x.SourceId, x.RecordedAtUtc });
+        telemetry.HasIndex(x => x.RecordedAtUtc);
     }
 
     private static void ConfigureMotionState(ModelBuilder modelBuilder)

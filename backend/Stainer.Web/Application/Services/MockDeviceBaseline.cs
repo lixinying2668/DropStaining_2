@@ -55,6 +55,19 @@ internal static class MockDeviceBaseline
     public const string MixerStatus = FluidicsStatuses.Idle;
     public const bool MixerIsConnected = true;
 
+    // ---------- water_supply_channel_states ----------
+    // Seeder: WaterSupplyControlService.EnsureSeededCoreAsync（4 个通道 CH1..CH4，每通道基线相同）。
+    // inlet=25.0℃(250), outlet target=45.0℃(450), outlet=25.0℃(250), volume=0ml, flow=250ml/min,
+    // outletEnabled=false, status=Idle, isConnected=true, fault/command=NULL。
+    public const int WaterInletTemperatureDeciC = 250;
+    public const int WaterOutletTargetTemperatureDeciC = 450;
+    public const int WaterOutletTemperatureDeciC = 250;
+    public const int WaterOutletVolumeMl = 0;
+    public const int WaterOutletFlowRateMlPerMinute = 250;
+    public const bool WaterOutletEnabled = false;
+    public const string WaterStatus = WaterSupplyStatuses.Idle;
+    public const bool WaterIsConnected = true;
+
     // ---------- liquid_container_states ----------
     // Seeder: FluidicsControlService.EnsureSeededCoreAsync (FluidicsControlService.cs:915-922) 通过
     // NewLiquid(...) 工厂显式注入容量与阈值。LevelStatus/IsConnected 走 LiquidContainerState 实体默认值

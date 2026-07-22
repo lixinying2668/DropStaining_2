@@ -207,3 +207,51 @@ public sealed record FluidicsTelemetryResponse(
     string? DeviceCommandExecutionId,
     string? FaultCode,
     DateTimeOffset RecordedAtUtc);
+
+public sealed record WaterSupplyStateResponse(
+    bool Ready,
+    IReadOnlyList<WaterSupplyChannelResponse> Channels,
+    DateTimeOffset GeneratedAtUtc);
+
+public sealed record WaterSupplyChannelResponse(
+    string Id,
+    int ChannelNo,
+    string ChannelCode,
+    int InletTemperatureDeciC,
+    int OutletTargetTemperatureDeciC,
+    int OutletTemperatureDeciC,
+    int OutletVolumeMl,
+    int OutletFlowRateMlPerMinute,
+    bool OutletEnabled,
+    string Status,
+    bool IsConnected,
+    string? CurrentCommandId,
+    string? FaultCode,
+    string? FaultMessage,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record WaterSupplyMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string Message,
+    WaterSupplyStateResponse State);
+
+public sealed record WaterSupplyTelemetryResponse(
+    string Id,
+    string SourceId,
+    int ChannelNo,
+    string ChannelCode,
+    string EventType,
+    int InletTemperatureDeciC,
+    int OutletTargetTemperatureDeciC,
+    int OutletTemperatureDeciC,
+    int OutletVolumeMl,
+    int OutletFlowRateMlPerMinute,
+    bool OutletEnabled,
+    string Status,
+    bool IsConnected,
+    string? CommandId,
+    string? FaultCode,
+    DateTimeOffset RecordedAtUtc);
+
