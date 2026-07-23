@@ -13,7 +13,8 @@ public sealed class MotionControlService(
     StainerDbContext dbContext,
     DeviceModeService deviceModeService,
     IConfiguration configuration,
-    IHostEnvironment environment)
+    IHostEnvironment environment,
+    IRobotMotionPrimitives motionPrimitives)
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -35,6 +36,62 @@ public sealed class MotionControlService(
     private const long MaxYUm = 600_000;
     private const long MinZUm = -10_000;
     private const long MaxZUm = 200_000;
+
+    public async Task<MotionDeviceResult> EnsureTravelSafeZAsync(RobotTravelSafeZRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await motionPrimitives.MoveZAsync(RobotZAxis.Z1, request.SafeZUm, cancellationToken);
+            await motionPrimitives.MoveZAsync(RobotZAxis.Z2, request.SafeZUm, cancellationToken);
+            return MotionDeviceResult.Succeeded("Robot Z axes moved to travel-safe height.", new Dictionary<string, object?>
+            {
+                ["safeZUm"] = request.SafeZUm
+            });
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return MotionDeviceResult.Failed(
+                "motion_travel_safe_z_failed",
+                exception.Message,
+                DeviceCommandStatuses.Failed,
+                new Dictionary<string, object?> { ["safeZUm"] = request.SafeZUm });
+        }
+    }
+
+    public async Task<MotionDeviceResult> MoveToXYAtSafeHeightAsync(RobotMoveToXYAtSafeHeightRequest request, CancellationToken cancellationToken = default)
+    {
+        var safeZ = await EnsureTravelSafeZAsync(new RobotTravelSafeZRequest(request.SafeZUm), cancellationToken);
+        if (!safeZ.Ok)
+        {
+            return safeZ;
+        }
+
+        try
+        {
+            await motionPrimitives.MoveXYAsync(request.TargetXUm, request.TargetYUm, cancellationToken);
+            return MotionDeviceResult.Succeeded("Robot moved to absolute XY at travel-safe height.", new Dictionary<string, object?>
+            {
+                ["pointCode"] = request.PointCode,
+                ["targetXUm"] = request.TargetXUm,
+                ["targetYUm"] = request.TargetYUm,
+                ["safeZUm"] = request.SafeZUm
+            });
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return MotionDeviceResult.Failed(
+                "motion_move_xy_failed",
+                exception.Message,
+                DeviceCommandStatuses.Failed,
+                new Dictionary<string, object?>
+                {
+                    ["pointCode"] = request.PointCode,
+                    ["targetXUm"] = request.TargetXUm,
+                    ["targetYUm"] = request.TargetYUm,
+                    ["safeZUm"] = request.SafeZUm
+                });
+        }
+    }
 
     public async Task<MotionDeviceResult> InitializeModuleAsync(string moduleCode, CancellationToken cancellationToken = default)
     {
@@ -999,6 +1056,14 @@ public sealed record MotionDeviceResult(
 }
 
 public sealed record MotionReadinessResult(bool Ok, string? ErrorCode, string Message);
+
+public sealed record RobotTravelSafeZRequest(long SafeZUm);
+
+public sealed record RobotMoveToXYAtSafeHeightRequest(
+    string PointCode,
+    long TargetXUm,
+    long TargetYUm,
+    long SafeZUm);
 
 public sealed record MotionModuleState(
     string ModuleCode,

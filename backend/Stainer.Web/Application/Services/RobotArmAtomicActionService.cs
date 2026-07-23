@@ -1,4 +1,5 @@
 using Stainer.Web.Application.Requests;
+using Stainer.Web.Domain.Entities;
 
 namespace Stainer.Web.Application.Services;
 
@@ -41,11 +42,12 @@ public sealed class RobotArmAtomicActionService(
         // 支持按调用指定吸液高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
         var aspirateZUm = request.AspirateZUm ?? _heights.AspirateZUm;
         var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        var zAxis = ResolveZAxis(request.NeedleCode);
         // MoveZ(吸液高度) -> Aspirate；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.TakeLiquid, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: request.VolumeUl, clearsNeedle: false, safeZUm, cancellationToken, async steps =>
+            netVolumeUl: request.VolumeUl, clearsNeedle: false, zAxis, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(aspirateZUm, cancellationToken); steps.Add(Step("MoveZ→吸液高度", aspirateZUm));
+            await _primitives.MoveZAsync(zAxis, aspirateZUm, cancellationToken); steps.Add(Step("MoveZ→吸液高度", aspirateZUm));
             await _primitives.AspirateAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Aspirate", request.VolumeUl));
         });
     }
@@ -57,11 +59,12 @@ public sealed class RobotArmAtomicActionService(
         // 支持按调用指定配液高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
         var mixZUm = request.MixZUm ?? _heights.MixZUm;
         var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        var zAxis = ResolveZAxis(request.NeedleCode);
         // MoveZ(配液高度) -> Dispense；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.PrepareMix, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: -request.VolumeUl, clearsNeedle: false, safeZUm, cancellationToken, async steps =>
+            netVolumeUl: -request.VolumeUl, clearsNeedle: false, zAxis, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(mixZUm, cancellationToken); steps.Add(Step("MoveZ→配液高度", mixZUm));
+            await _primitives.MoveZAsync(zAxis, mixZUm, cancellationToken); steps.Add(Step("MoveZ→配液高度", mixZUm));
             await _primitives.DispenseAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Dispense", request.VolumeUl));
         });
     }
@@ -73,11 +76,12 @@ public sealed class RobotArmAtomicActionService(
         // 支持按调用指定滴液高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
         var dispenseZUm = request.DispenseZUm ?? _heights.DispenseZUm;
         var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        var zAxis = ResolveZAxis(request.NeedleCode);
         // MoveZ(滴液高度) -> Dispense；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.DispenseLiquid, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: -request.VolumeUl, clearsNeedle: false, safeZUm, cancellationToken, async steps =>
+            netVolumeUl: -request.VolumeUl, clearsNeedle: false, zAxis, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(dispenseZUm, cancellationToken); steps.Add(Step("MoveZ→滴液高度", dispenseZUm));
+            await _primitives.MoveZAsync(zAxis, dispenseZUm, cancellationToken); steps.Add(Step("MoveZ→滴液高度", dispenseZUm));
             await _primitives.DispenseAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Dispense", request.VolumeUl));
         });
     }
@@ -90,11 +94,12 @@ public sealed class RobotArmAtomicActionService(
         // 支持按调用指定内壁清洗高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
         var washInnerZUm = request.WashInnerZUm ?? _heights.WashInnerZUm;
         var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        var zAxis = ResolveZAxis(request.NeedleCode);
         // MoveZ(内壁清洗高度) -> Aspirate 清洗液 -> Dispense 废液；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.WashInner, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: 0, clearsNeedle: true, safeZUm, cancellationToken, async steps =>
+            netVolumeUl: 0, clearsNeedle: true, zAxis, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(washInnerZUm, cancellationToken); steps.Add(Step("MoveZ→内壁清洗高度", washInnerZUm));
+            await _primitives.MoveZAsync(zAxis, washInnerZUm, cancellationToken); steps.Add(Step("MoveZ→内壁清洗高度", washInnerZUm));
             await _primitives.AspirateAsync(request.WashVolumeUl, cancellationToken); steps.Add(Step("Aspirate 清洗液", request.WashVolumeUl));
             await _primitives.DispenseAsync(request.WasteVolumeUl, cancellationToken); steps.Add(Step("Dispense 废液", request.WasteVolumeUl));
         });
@@ -106,11 +111,12 @@ public sealed class RobotArmAtomicActionService(
         // 支持按调用指定外壁清洗高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
         var washOuterZUm = request.WashOuterZUm ?? _heights.WashOuterZUm;
         var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        var zAxis = ResolveZAxis(request.NeedleCode);
         // MoveZ(外壁清洗高度) -> 执行外壁清洗；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.WashOuter, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: 0, clearsNeedle: true, safeZUm, cancellationToken, async steps =>
+            netVolumeUl: 0, clearsNeedle: true, zAxis, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(washOuterZUm, cancellationToken); steps.Add(Step("MoveZ→外壁清洗高度", washOuterZUm));
+            await _primitives.MoveZAsync(zAxis, washOuterZUm, cancellationToken); steps.Add(Step("MoveZ→外壁清洗高度", washOuterZUm));
             await _primitives.WashOuterAsync(cancellationToken); steps.Add(Step("外壁清洗", null));
         });
     }
@@ -126,6 +132,7 @@ public sealed class RobotArmAtomicActionService(
         string? reason,
         int netVolumeUl,
         bool clearsNeedle,
+        RobotZAxis zAxis,
         long safeZUm,
         CancellationToken cancellationToken,
         Func<List<RobotArmAtomicStep>, Task> body)
@@ -137,7 +144,7 @@ public sealed class RobotArmAtomicActionService(
         }
         finally
         {
-            await _primitives.MoveZAsync(safeZUm, cancellationToken);
+            await _primitives.MoveZAsync(zAxis, safeZUm, cancellationToken);
             steps.Add(Step("MoveZ→安全高度", safeZUm));
         }
 
@@ -170,6 +177,16 @@ public sealed class RobotArmAtomicActionService(
         {
             throw new BusinessRuleException("atomic_action_volume_invalid", $"{fieldName} must be a positive volume in uL.");
         }
+    }
+
+    private static RobotZAxis ResolveZAxis(string? needleCode)
+    {
+        var normalized = needleCode?.Trim();
+        return normalized is not null
+            && (normalized.Equals(NeedleCodes.Needle2, StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("2", StringComparison.OrdinalIgnoreCase))
+            ? RobotZAxis.Z2
+            : RobotZAxis.Z1;
     }
 }
 

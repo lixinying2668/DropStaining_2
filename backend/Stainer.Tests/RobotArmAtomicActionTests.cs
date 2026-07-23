@@ -39,9 +39,9 @@ public sealed class RobotArmAtomicActionTests
         Assert.Equal(RobotAtomicActions.TakeLiquid, result.Action);
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.AspirateZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.AspirateZUm),
             RobotPrimitiveCall.Aspirate(100),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -53,9 +53,9 @@ public sealed class RobotArmAtomicActionTests
         Assert.True(result.Ok, result.Message);
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.MixZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.MixZUm),
             RobotPrimitiveCall.Dispense(80),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -67,9 +67,9 @@ public sealed class RobotArmAtomicActionTests
         Assert.True(result.Ok, result.Message);
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.DispenseZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.DispenseZUm),
             RobotPrimitiveCall.Dispense(60),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -81,10 +81,10 @@ public sealed class RobotArmAtomicActionTests
         Assert.True(result.Ok, result.Message);
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.WashInnerZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.WashInnerZUm),
             RobotPrimitiveCall.Aspirate(200),
             RobotPrimitiveCall.Dispense(200),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -96,9 +96,9 @@ public sealed class RobotArmAtomicActionTests
         Assert.True(result.Ok, result.Message);
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.WashOuterZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.WashOuterZUm),
             RobotPrimitiveCall.WashOuter(),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -180,9 +180,9 @@ public sealed class RobotArmAtomicActionTests
         // 期望序列：MoveZ(吸液) -> Aspirate(抛) -> MoveZ(安全)（finally 兜底）。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.AspirateZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.AspirateZUm),
             RobotPrimitiveCall.Aspirate(100),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -200,8 +200,8 @@ public sealed class RobotArmAtomicActionTests
         Assert.DoesNotContain(primitives.Calls, c => c.Kind == "Dispense");
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.DispenseZUm),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.DispenseZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -218,9 +218,9 @@ public sealed class RobotArmAtomicActionTests
         // MoveZ(下降) -> Dispense(抛) -> MoveZ(安全)。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(Heights.DispenseZUm),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.DispenseZUm),
             RobotPrimitiveCall.Dispense(60),
-            RobotPrimitiveCall.MoveZ(Heights.SafeZUm)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, Heights.SafeZUm)
         ], primitives.Calls);
     }
 
@@ -295,9 +295,9 @@ public sealed class RobotArmAtomicActionTests
         // 顺序契约：先下降到指定吸液高度 -> 再吸液 -> 最后回指定安全高度。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(7_777),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 7_777),
             RobotPrimitiveCall.Aspirate(100),
-            RobotPrimitiveCall.MoveZ(88_888)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
         // 复用现有 Mock 状态：机械臂停在本次安全高度，流水账落库。
@@ -327,9 +327,9 @@ public sealed class RobotArmAtomicActionTests
         // 顺序契约：先下降到指定滴液高度 -> 再排液 -> 最后回指定安全高度。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(6_666),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 6_666),
             RobotPrimitiveCall.Dispense(60),
-            RobotPrimitiveCall.MoveZ(88_888)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
         // 复用现有 Mock 状态：机械臂停在本次安全高度，流水账落库。
@@ -359,9 +359,9 @@ public sealed class RobotArmAtomicActionTests
         // 顺序契约：先下降到指定配液高度 -> 再排液 -> 最后回指定安全高度。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(5_555),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 5_555),
             RobotPrimitiveCall.Dispense(80),
-            RobotPrimitiveCall.MoveZ(88_888)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
         var arm = await dbContext.RobotArmStates.SingleAsync();
@@ -390,10 +390,10 @@ public sealed class RobotArmAtomicActionTests
         // Z 顺序契约：先下降到指定内壁清洗高度 -> 吸清洗液 -> 排废液 -> 最后回指定安全高度。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(4_444),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 4_444),
             RobotPrimitiveCall.Aspirate(200),
             RobotPrimitiveCall.Dispense(200),
-            RobotPrimitiveCall.MoveZ(88_888)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
         var arm = await dbContext.RobotArmStates.SingleAsync();
@@ -421,9 +421,9 @@ public sealed class RobotArmAtomicActionTests
         // Z 顺序契约：先下降到指定外壁清洗高度 -> 执行外壁清洗 -> 最后回指定安全高度。
         Assert.Equal(
         [
-            RobotPrimitiveCall.MoveZ(5_555),
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 5_555),
             RobotPrimitiveCall.WashOuter(),
-            RobotPrimitiveCall.MoveZ(88_888)
+            RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
         var arm = await dbContext.RobotArmStates.SingleAsync();
@@ -452,9 +452,18 @@ public sealed class RobotArmAtomicActionTests
     {
         public List<RobotPrimitiveCall> Calls { get; } = new();
 
-        public Task MoveZAsync(long zUm, CancellationToken cancellationToken = default)
+        public Task<RobotArmPositionUm> GetPositionAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RobotArmPositionUm(0, 0, 0, 0));
+
+        public Task MoveXYAsync(long xUm, long yUm, CancellationToken cancellationToken = default)
         {
-            Calls.Add(RobotPrimitiveCall.MoveZ(zUm));
+            Calls.Add(RobotPrimitiveCall.MoveXY(xUm, yUm));
+            return Task.CompletedTask;
+        }
+
+        public Task MoveZAsync(RobotZAxis axis, long zUm, CancellationToken cancellationToken = default)
+        {
+            Calls.Add(RobotPrimitiveCall.MoveZ(axis, zUm));
             return Task.CompletedTask;
         }
 
@@ -488,9 +497,18 @@ public sealed class RobotArmAtomicActionTests
         private int _dispenseCount;
         private int _washOuterCount;
 
-        public Task MoveZAsync(long zUm, CancellationToken cancellationToken = default)
+        public Task<RobotArmPositionUm> GetPositionAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new RobotArmPositionUm(0, 0, 0, 0));
+
+        public Task MoveXYAsync(long xUm, long yUm, CancellationToken cancellationToken = default)
         {
-            Calls.Add(RobotPrimitiveCall.MoveZ(zUm));
+            Calls.Add(RobotPrimitiveCall.MoveXY(xUm, yUm));
+            return Task.CompletedTask;
+        }
+
+        public Task MoveZAsync(RobotZAxis axis, long zUm, CancellationToken cancellationToken = default)
+        {
+            Calls.Add(RobotPrimitiveCall.MoveZ(axis, zUm));
             if (ThrowOnFirst == "MoveZ" && _moveZCount++ == 0)
             {
                 throw new InvalidOperationException("movez failed");

@@ -21,7 +21,7 @@ public static class ServiceCollectionExtensions
 
         services.AddPersistenceServices(connectionString);
         services.AddRepositoryServices();
-        services.AddApplicationServices();
+        services.AddApplicationServices(configuration);
         services.AddDeviceServices(configuration, environment);
         services.AddRuntimeMessagingServices();
         services.AddHostedRuntimeServices();
@@ -54,7 +54,7 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    private static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    private static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddSingleton<SafetyLogWriter>();
         services.AddSingleton<MachineExecutorLeaseService>();
@@ -114,9 +114,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<WaterSupplyControlService>();
         services.AddScoped<MotionControlService>();
-        // 机械臂业务原子操作层（第一阶段 Mock）：原子动作服务编排 IRobotMotionPrimitives，
-        // 当前注册 MockRobotMotionPrimitives，不接真实 SOCON；后续替换为真实实现即可，编排与单测不变。
-        services.AddScoped<IRobotMotionPrimitives, MockRobotMotionPrimitives>();
+        var requestedMode = DeviceModes.Normalize(configuration["Device:Mode"]);
+        // 机械臂业务原子操作层：Mock 模式使用 Mock primitives；Real 模式 fail-closed，绝不回退 Mock。
+        services.AddScoped<IRobotMotionPrimitives>(_ =>
+            requestedMode == DeviceModes.Real
+                ? new UnavailableRobotMotionPrimitives()
+                : new MockRobotMotionPrimitives());
         services.AddScoped<IRobotArmAtomicActionService, RobotArmAtomicActionService>();
         // 记录器把原子动作净效果写入现有 Mock 运行状态 / 流水账（RobotArmState / NeedleState / PipettingOperations）。
         services.AddScoped<IRobotArmAtomicActionRecorder, MockStateAtomicActionRecorder>();
