@@ -4659,7 +4659,7 @@ async function dispatchObjectAction(action, item, baseId, btn) {
       if(action === '停止试剂条码扫描') return await reagentPositionScan(rackCode, 'stop', name);
       if(action === '清空试剂条码') return await reagentPositionScan(rackCode, 'clear', name);
     }
-    if(action === '保存ROI到扫码器和配置文件') { if(isReagent) return await saveReagentPositionConfig(item, baseId, `${baseId}-barcode-x`, `${baseId}-barcode-y`); return await applyScannerRoi(baseId, 'sample'); }
+    if(action === '保存ROI到扫码器和配置文件') return await saveReagentPositionConfig(item, baseId, `${baseId}-barcode-x`, `${baseId}-barcode-y`);
     if(action === '保存孔位参数') return await saveReagentPositionConfig(item, baseId, `${baseId}-coord-x`, `${baseId}-coord-y`);
     if(action === '保存扫码XY坐标到配置文件') return await saveReagentPositionConfig(item, baseId, `${baseId}-barcode-x`, `${baseId}-barcode-y`);
     if(PIPETTE_ACTIONS[action]) return await runPipetteTest(action, item, baseId);
@@ -4836,10 +4836,7 @@ function bindObjectEngineeringDetail(item, baseId) {
   const lcEl = document.getElementById(`${baseId}-pipette-liquid-class`);
   if(lcEl && !lcEl.dataset.liquidClassBound) { lcEl.dataset.liquidClassBound = 'true'; refreshLiquidClassOptionsCache().then(() => rebuildLiquidClassSelect(lcEl, currentLiquidClassCode)); }
   // 打开对象详情时回填已存的坐标(X/Y+Z)与扫码器 ROI（保存后再回来还在）。
-  loadReagentPositionConfig(item, baseId);
-  if(item.category === '试剂区' || item.category === '玻片通道') {
-    if(item.category === '玻片通道') loadObjectScannerRoi(baseId, 'sample'); // 试剂区 ROI 已由 loadReagentPositionConfig 处理（每试剂位独立）
-  }
+  loadReagentPositionConfig(item, baseId); // 玻片+试剂统一：X/Y + Z + ROI + 移液参数 每对象独立
 }
 
 function renderCoordinateEditor(item, baseId) {
@@ -4888,7 +4885,7 @@ async function runArmInspection(name) {
 // 试剂位对象配置（坐标修正 X/Y + 孔位 Z 高度）↔ 后端 reagent_position_configs（简单单行 GET/PUT，不走 coordinate 版本治理）
 async function loadReagentPositionConfig(item, baseId) {
   const rackCode = itemToPointCode(item);
-  if(!rackCode || !/^R\d+$/.test(rackCode)) return;
+  if(!rackCode || !/^(R\d+|[A-D]-0[1-4])$/.test(rackCode)) return;
   try {
     const c = await backendApi(`/api/engineering/reagent-position-config/${encodeURIComponent(rackCode)}`);
     const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = v; };
@@ -4904,7 +4901,7 @@ async function loadReagentPositionConfig(item, baseId) {
 }
 async function saveReagentPositionConfig(item, baseId, xInputId, yInputId) {
   const rackCode = itemToPointCode(item);
-  if(!rackCode || !/^R\d+$/.test(rackCode)) { log(`${item?.name || ''} 无对应试剂位码，无法保存`, 'warn'); return; }
+  if(!rackCode || !/^(R\d+|[A-D]-0[1-4])$/.test(rackCode)) { log(`${item?.name || ''} 无对应试剂位码，无法保存`, 'warn'); return; }
   const num = id => { const v = Number(document.getElementById(id)?.value); return Number.isFinite(v) ? v : null; };
   const body = {
     commandId: makeCommandId('reagent-pos-cfg'),
@@ -6570,7 +6567,7 @@ function renderConfigScannerSection() {
         <section class="engineering-card" id="scannerComCard" data-control-id="scannerComCard">
           <strong>COM 口设置</strong>
           <div class="engineering-mini-grid four">
-            ${configSelect('scannerTargetSelect','扫码器',[['sample','样本扫码器（机械臂随动相机）'],['reagent','试剂扫码器']],'reagent')}
+            ${configSelect('scannerTargetSelect','扫码器',[['sample','样本扫码器（机械臂随动相机）']],'sample')}
             ${configSelect('scannerComPortSelect','COM口',['COM1','COM2','COM3','COM4'],'COM1')}
             ${configSelect('scannerBaudRateSelect','波特率',['115200','57600','38400','9600'],'115200')}
             ${configTextInput('scannerSerialPresetInput','串口参数','8 bits / 1 bits / 无','')}
@@ -6613,7 +6610,7 @@ function renderConfigScannerSection() {
 function renderConfigArmSection() {
   return `<section class="config-pane-section ${activeConfigSection==='arm'?'active':''}" id="configSectionArm" data-control-id="configSectionArm">
     <div class="engineering-config-module scanner-layout-module">
-      <div class="engineering-status-strip"><span class="engineering-status-dot ok"></span><strong>机械臂配置</strong><span class="subtle">机械臂主体通讯参数，当前仅做前端模拟反馈，不调用后端接口。</span></div>
+      <div class="engineering-status-strip"><span class="engineering-status-dot ok"></span><strong>机械臂配置</strong><span class="subtle">机械臂主体通讯参数，串口配置写入数据库（deviceKey=arm）。</span></div>
       <div class="config-arm-layout">
         <section class="engineering-card wide" id="armComCard" data-control-id="armComCard">
           <strong>COM 口设置</strong>
@@ -6624,11 +6621,11 @@ function renderConfigArmSection() {
             ${configTextInput('armComStatusInput','通讯状态','待配置 / 模拟','')}
           </div>
           <div class="engineering-actions">${engineeringButton('设置COM口','config/arm:set-com','primary-lite')}${engineeringButton('读取COM口','config/arm:read-com')}${engineeringButton('重启通讯','config/arm:restart-com','warn-lite')}</div>
-          <div class="engineering-note">参数选项与扫码器 COM 设置保持一致；后续可按控件 ID 对接真实机械臂通讯配置。</div>
+          <div class="engineering-note">COM 下拉从本机真实串口读取；设置/读取经 /api/engineering/serial-config/arm 落库（与主控、扫码器同机制）。</div>
         </section>
         <section class="engineering-card wide" id="armComConsoleCard" data-control-id="armComConsoleCard">
           <strong>通讯反馈</strong>
-          <div class="test-console config-console-large" id="armComConsole" data-control-id="armComConsole">[SIM] 机械臂主体 COM 通讯未连接。\n[SIM] 点击“设置COM口 / 读取COM口 / 重启通讯”仅更新前端状态与日志。</div>
+          <div class="test-console config-console-large" id="armComConsole" data-control-id="armComConsole">[就绪] 机械臂 COM 配置（deviceKey=arm，串口参数落库）。\n设置/读取 COM 口与数据库交互；重启通讯仅记录意图（真实重启由机械臂/网桥进程负责）。</div>
         </section>
       </div>
     </div>
@@ -7113,7 +7110,7 @@ async function runSerialDebugExchange() {
   }
 }
 // 用本机真实串口填充调试 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。保留当前选中值。
-// 用本机真实串口填充指定 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。调试/扫码器共用。
+// 用本机真实串口填充指定 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。调试/扫码器/机械臂共用。
 // 注意：不保留渲染时的硬编码默认（如 COM1）——否则会把不存在的 COM1 混进真实端口列表。保存的端口由调用方随后回填。
 async function populateComPortSelect(selectId) {
   let ports = null;
@@ -7362,32 +7359,47 @@ function bindArmMainDetailControls(root=document) {
   });
 }
 
-function handleArmComAction(action) {
-  const port = document.getElementById('armComPortSelect')?.value || 'COM1';
-  const baud = document.getElementById('armBaudRateSelect')?.value || '115200';
-  const serial = document.getElementById('armSerialPresetInput')?.value || '8 bits / 1 bits / 无';
+// 机械臂 COM：与主控/扫码器同机制，deviceKey='arm'。GET/PUT /api/engineering/serial-config/arm，落库。
+async function loadArmComConfigIntoInputs() {
+  await populateComPortSelect('armComPortSelect'); // 先用本机真实串口重建下拉
+  let cfg = null;
+  try { cfg = await backendApi('/api/engineering/serial-config/arm'); } catch(e) { cfg = null; }
+  if(!cfg) return null;
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = String(v); };
+  setVal('armComPortSelect', cfg.portName);
+  setVal('armBaudRateSelect', cfg.baudRate);
+  const preset = document.getElementById('armSerialPresetInput');
+  if(preset) preset.value = `${cfg.dataBits || 8} bits / ${cfg.stopBits === 'Two' ? 2 : 1} bits / ${(!cfg.parity || cfg.parity === 'None') ? '无' : cfg.parity}`;
+  return cfg;
+}
+
+async function handleArmComAction(action) {
   const status = document.getElementById('armComStatusInput');
   const consoleNode = document.getElementById('armComConsole');
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('digitalTwinArmComConfig') || 'null'); } catch(e) { saved = null; }
   const stamp = new Date().toLocaleTimeString();
   let message = '';
-  if(action === 'config/arm:set-com') {
-    try { localStorage.setItem('digitalTwinArmComConfig', JSON.stringify({ port, baud, serial })); } catch(e) {}
-    if(status) status.value = `已设置 / ${port} @ ${baud}`;
-    message = `设置机械臂 COM：${port} @ ${baud}，${serial}`;
-  } else if(action === 'config/arm:read-com') {
-    const cfg = saved || { port, baud, serial };
-    const setValue = (id, value) => { const el = document.getElementById(id); if(el) el.value = value; };
-    setValue('armComPortSelect', cfg.port || 'COM1');
-    setValue('armBaudRateSelect', cfg.baud || '115200');
-    setValue('armSerialPresetInput', cfg.serial || '8 bits / 1 bits / 无');
-    if(status) status.value = `已读取 / ${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}`;
-    message = `读取机械臂 COM：${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}，${cfg.serial || '8 bits / 1 bits / 无'}`;
-  } else if(action === 'config/arm:restart-com') {
-    if(status) status.value = `重启完成 / ${port} @ ${baud}`;
-    message = `机械臂通讯已重启（模拟）：${port} @ ${baud}`;
-  }
+  try {
+    if(action === 'config/arm:set-com') {
+      const body = {
+        portName: document.getElementById('armComPortSelect')?.value || null,
+        baudRate: Number(document.getElementById('armBaudRateSelect')?.value) || 115200,
+        dataBits: 8, parity: 'None', stopBits: 'One', handshake: 'None'
+      };
+      await writeApi('/api/engineering/serial-config/arm', { method:'PUT', body: JSON.stringify(Object.assign({ commandId: makeCommandId('arm-com'), reason: '配置/机械臂：设置COM口' }, body)) });
+      if(status) status.value = `已保存到数据库 / ${body.portName || '未配置'} @ ${body.baudRate}`;
+      message = `设置机械臂 COM：${body.portName || '未配置'} @ ${body.baudRate}（已写入数据库）`;
+    } else if(action === 'config/arm:read-com') {
+      const cfg = await loadArmComConfigIntoInputs();
+      if(status) status.value = `已读取 / ${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}`;
+      message = `读取机械臂 COM：${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}`;
+    } else if(action === 'config/arm:restart-com') {
+      // 串口配置本身没有"重启"语义；真实机械臂通讯重启由网桥/机械臂进程负责，这里只记意图，不伪造后端动作。
+      const port = document.getElementById('armComPortSelect')?.value || '未配置';
+      const baud = document.getElementById('armBaudRateSelect')?.value || 115200;
+      if(status) status.value = `已请求重启 / ${port} @ ${baud}`;
+      message = `机械臂通讯重启：串口配置无独立重启接口，仅记录意图（真实重启由机械臂/网桥进程负责）`;
+    }
+  } catch(e) { /* routed by writeApi */ }
   if(consoleNode && message) consoleNode.textContent += `\n[${stamp}] ${message}`;
   if(message) log(message, 'ok');
 }
@@ -7396,7 +7408,7 @@ async function dispatchEngineeringAction(action, btn) {
   if(btn) flashControl(btn);
   const consoleNode = document.querySelector('.test-console');
   try {
-    if(String(action || '').startsWith('config/arm:')) { handleArmComAction(action); return; }
+    if(String(action || '').startsWith('config/arm:')) { await handleArmComAction(action); return; }
     if(action === '配置/清洗混匀：开始混匀' || action === '配置/清洗混匀：混匀复位') {
       const drawer = drawerFromChannelSelect('thermalMixChannelSelect');
       if(!drawer) { log('请先在"通道选择"选择具体通道（1-4）再操作混匀', 'warn'); return; }
@@ -7765,6 +7777,10 @@ function bindConfigHandlers() {
   // 扫码器子页：进入即把已保存的 COM + ROI 回填到输入框，避免切换子页后值"丢失"。
   if(document.getElementById('scannerComPortSelect') || document.getElementById('scannerRoiLeftInput')) {
     loadScannerConfigIntoInputs();
+  }
+  // 机械臂子页：进入即用本机真实串口重建下拉 + 回填已保存的 COM 配置。
+  if(document.getElementById('armComPortSelect')) {
+    loadArmComConfigIntoInputs();
   }
 }
 
