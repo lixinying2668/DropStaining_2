@@ -112,9 +112,11 @@ public sealed class ReagentPositionConfigService(
     private static string NormalizeRackCode(string? rackCode)
     {
         var normalized = (rackCode ?? string.Empty).Trim().ToUpperInvariant();
-        if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^R([1-9]|[1-3]\d|40)$"))
+        // 接受试剂位 R1-R40 和玻片位 A-01 ~ D-04
+        if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^R([1-9]|[1-3]\d|40)$")
+            || System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^[A-D]-0[1-4]$"))
             return normalized;
-        throw new BusinessRuleException("rack_code_invalid", "rackCode must be R1-R40.", StatusCodes.Status400BadRequest);
+        throw new BusinessRuleException("rack_code_invalid", "rackCode must be R1-R40 or A-01~D-04.", StatusCodes.Status400BadRequest);
     }
 
     private static decimal? ValidateRange(decimal? value, string fieldName, decimal minimum, decimal maximum)
