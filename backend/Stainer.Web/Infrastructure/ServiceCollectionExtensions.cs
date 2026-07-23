@@ -176,6 +176,9 @@ public static class ServiceCollectionExtensions
                 ? serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>()
                 : serviceProvider.GetRequiredService<MockDeviceOperations>());
 
+        // 调试栏「通信测试」：真实 COM 字节收发服务（原始字节，独立调试通道，不影响运行时设备链路）。
+        services.AddSingleton<SerialDebugService>();
+
         return services;
     }
 

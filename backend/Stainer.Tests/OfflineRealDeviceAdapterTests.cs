@@ -394,6 +394,24 @@ public sealed class OfflineRealDeviceAdapterTests
         Assert.Empty(fake.ExchangeRequests);
     }
 
+    [Fact]
+    public async Task ScanSampleAsync_reads_barcode_from_dcr55_transport()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        // DCR55 扫码枪：触发后返回 CRLF 结尾的 ASCII 条码帧（样本/玻片条码由机械臂末端 DCR55 读取）。
+        fake.EnqueueReceive(DeviceByteTransportEndpoints.Dcr55, Encoding.ASCII.GetBytes("TLG001\r\n"));
+
+        var result = await adapter.ScanSampleAsync(RequestFor(DeviceModules.SampleScanner, "scan"));
+
+        Assert.True(result.Ok, result.Message);
+        Assert.Equal(DeviceCommandStatuses.Succeeded, result.Status);
+        Assert.True(result.Acknowledged);
+        Assert.Equal("TLG001", result.Data["barcode"]);
+        Assert.Equal("Dcr55", result.Data["scanSource"]);
+        Assert.Equal(DeviceByteTransportEndpoints.Dcr55, Assert.Single(fake.ReceiveEndpoints));
+    }
+
     private static DeviceOperationRequest PumpRequest(string action, int pwmId, int value) =>
         new(
             new DeviceCommandContext($"cmd-pwm-{action}-{pwmId}-{value}", null, "test", nameof(OfflineRealDeviceAdapterTests)),
@@ -453,7 +471,6 @@ public sealed class OfflineRealDeviceAdapterTests
             RequestFor(DeviceModules.Pump, "drain"),
             RequestFor(DeviceModules.Pump, "detox"),
             RequestFor(DeviceModules.ReagentScanner, ReagentQrCommands.GetText), // 试剂扫码启动/复位已真发字节；此处用非扫码 action 验证其余试剂 action 仍 reject
-            RequestFor(DeviceModules.SampleScanner, "trigger"),
             RequestFor(DeviceModules.Workflow, "execute")
         };
 
@@ -468,8 +485,7 @@ public sealed class OfflineRealDeviceAdapterTests
             await adapter.RunPumpAsync(requests[6]),
             await adapter.RunPumpAsync(requests[7]),
             await adapter.ScanReagentAsync(requests[8]),
-            await adapter.ScanSampleAsync(requests[9]),
-            await adapter.ExecuteWorkflowActionAsync(requests[10])
+            await adapter.ExecuteWorkflowActionAsync(requests[9])
         };
 
         Assert.All(results, result =>

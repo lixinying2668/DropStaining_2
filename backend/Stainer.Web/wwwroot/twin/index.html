@@ -6367,7 +6367,7 @@ function renderDebugPane() {
   if(!sections.some(([key]) => key === activeDebugSection)) activeDebugSection = 'com';
   const consoleHtml = `<div class="test-console" id="debugCommandConsole" data-control-id="debugCommandConsole">[SIM] 工程师调试控制台就绪。\n[SIM] 当前子页：${escapeHtml(sections.find(([key]) => key === activeDebugSection)?.[1] || 'COM设置')}。</div>`;
   const panes = {
-    com: `<div class="subtab-pane debug-subpane ${activeDebugSection==='com'?'active':''}" id="debugSubpaneCom" data-debug-pane="com" role="tabpanel" aria-labelledby="debugSubtabCom"><section class="engineering-card" id="debugComCard" data-control-id="debugComCard"><strong>COM 设置 <span class="engineering-pill">默认 115200 / 8N1</span></strong><div class="engineering-form-grid"><label>COM口<select id="debugComPortSelect" data-control-id="debugComPortSelect"><option>COM1</option><option>COM2</option><option>COM3</option><option>COM4</option></select></label><label>波特率<select id="debugBaudRateSelect" data-control-id="debugBaudRateSelect"><option selected>115200</option><option>57600</option><option>38400</option><option>9600</option></select></label><label>数据位<select id="debugDataBitsSelect" data-control-id="debugDataBitsSelect"><option selected>8 bits</option><option>7 bits</option></select></label><label>停止位<select id="debugStopBitsSelect" data-control-id="debugStopBitsSelect"><option selected>1 bits</option><option>2 bits</option></select></label><label>校验位<select id="debugParitySelect" data-control-id="debugParitySelect"><option selected>无</option><option>Odd</option><option>Even</option></select></label><label>连接状态<input id="debugComStatusText" data-control-id="debugComStatusText" value="未连接 / 模拟" readonly></label></div><div class="engineering-actions">${engineeringButton('设置COM口','调试：设置COM口参数','primary-lite')}${engineeringButton('读取COM口','调试：读取COM口参数')}${engineeringButton('重启通讯','调试：重启串口通讯','warn-lite')}</div><div class="engineering-note">串口参数预置为 115200、8 数据位、1 停止位、无校验；后续可直接映射到上位机串口参数。</div></section>${consoleHtml}</div>`,
+    com: `<div class="subtab-pane debug-subpane ${activeDebugSection==='com'?'active':''}" id="debugSubpaneCom" data-debug-pane="com" role="tabpanel" aria-labelledby="debugSubtabCom"><section class="engineering-card" id="debugComCard" data-control-id="debugComCard"><strong>COM 设置 <span class="engineering-pill">默认 115200 / 8N1</span></strong><div class="engineering-form-grid"><label>COM口<select id="debugComPortSelect" data-control-id="debugComPortSelect"><option>COM1</option><option>COM2</option><option>COM3</option><option>COM4</option></select></label><label>波特率<select id="debugBaudRateSelect" data-control-id="debugBaudRateSelect"><option selected>115200</option><option>57600</option><option>38400</option><option>9600</option></select></label><label>数据位<select id="debugDataBitsSelect" data-control-id="debugDataBitsSelect"><option selected>8 bits</option><option>7 bits</option></select></label><label>停止位<select id="debugStopBitsSelect" data-control-id="debugStopBitsSelect"><option selected>1 bits</option><option>2 bits</option></select></label><label>校验位<select id="debugParitySelect" data-control-id="debugParitySelect"><option selected>无</option><option>Odd</option><option>Even</option></select></label><label>连接状态<input id="debugComStatusText" data-control-id="debugComStatusText" value="未连接 / 模拟" readonly></label></div><div class="engineering-actions">${engineeringButton('设置COM口','调试：设置COM口参数','primary-lite')}${engineeringButton('读取COM口','调试：读取COM口参数')}${engineeringButton('重启通讯','调试：重启串口通讯','warn-lite')}</div><div class="engineering-form-grid"><label>测试字节<input id="debugComTestTextInput" data-control-id="debugComTestTextInput" value="PING"></label><label>超时 / ms<input id="debugComTestTimeoutInput" data-control-id="debugComTestTimeoutInput" type="number" value="1000"></label></div><div class="engineering-actions">${engineeringButton('通信测试','调试：通信测试','primary-lite')}</div><div class="engineering-note">串口参数预置为 115200、8 数据位、1 停止位、无校验。「通信测试」真实打开选中的 COM 口收发字节（环回下发什么收什么），用于验证 COM 通路；需管理员权限。</div></section>${consoleHtml}</div>`,
     precision: `<div class="subtab-pane debug-subpane ${activeDebugSection==='precision'?'active':''}" id="debugSubpanePrecision" data-debug-pane="precision" role="tabpanel" aria-labelledby="debugSubtabPrecision"><section class="engineering-card" id="debugPrecisionCard" data-control-id="debugPrecisionCard"><strong>精度校正</strong><div class="engineering-form-grid"><label>X 校正偏差 / mm<input id="debugMovePrecisionXInput" data-control-id="debugMovePrecisionXInput" type="number" step="0.001" value="0.000"></label><label>Y 校正偏差 / mm<input id="debugMovePrecisionYInput" data-control-id="debugMovePrecisionYInput" type="number" step="0.001" value="0.000"></label><label>加样体积目标 / μL<input id="debugDispenseTargetInput" data-control-id="debugDispenseTargetInput" type="number" step="1" value="100"></label><label>实测体积 / μL<input id="debugDispenseMeasuredInput" data-control-id="debugDispenseMeasuredInput" type="number" step="0.1" placeholder="请输入"></label></div><div class="engineering-actions">${engineeringButton('校正移位精度确认','调试：校正移位精度确认','ok-lite')}${engineeringButton('校正加样精度确认','调试：校正加样精度确认','ok-lite')}</div><div class="engineering-note">两个 Z 轴可独立控制；这里预留移动校正和加样精度校正指令。</div></section>${consoleHtml}</div>`,
     liquid: `<div class="subtab-pane debug-subpane ${activeDebugSection==='liquid'?'active':''}" id="debugSubpaneLiquid" data-debug-pane="liquid" role="tabpanel" aria-labelledby="debugSubtabLiquid"><section class="engineering-card" id="debugLiquidClassCard" data-control-id="debugLiquidClassCard"><strong>液体类型</strong><div class="engineering-kv"><div><span>当前 Liquid Class</span><b id="debugLiquidClassName">Ab</b></div><div><span>吸液速度</span><b id="debugLiquidAspSpeedText">待配置</b></div><div><span>加液速度</span><b id="debugLiquidDispSpeedText">待配置</b></div><div><span>空气段参数</span><b>System / Leading / Trailing</b></div></div><div class="engineering-actions">${engineeringButton('打开液体类型配置','调试：打开液体类型配置','primary-lite')}${engineeringButton('读取当前液体类型','调试：读取当前液体类型')}${engineeringButton('保存当前液体类型','调试：保存当前液体类型','ok-lite')}</div><div class="engineering-note">完整参数在“配置 → 液体类型”中维护，包括探液、空气段、额外量、Conditioning Volume 和 Blow-out。</div></section>${consoleHtml}</div>`,
     module: `<div class="subtab-pane debug-subpane ${activeDebugSection==='module'?'active':''}" id="debugSubpaneModule" data-debug-pane="module" role="tabpanel" aria-labelledby="debugSubtabModule"><section class="engineering-card" id="debugModuleTestCard" data-control-id="debugModuleTestCard"><strong>模块测试</strong>${moduleTestParamsHtml()}<div class="module-control-grid" id="debugModuleControlGrid" data-control-id="debugModuleControlGrid">${engineeringButton('加样臂测试','调试：加样臂测试')}${engineeringButton('条码扫描测试','调试：条码扫描测试')}${engineeringButton('混匀测试','调试：混匀测试')}${engineeringButton('清洗控制测试','调试：清洗控制测试')}${engineeringButton('打开校验光','调试：打开校验光')}${engineeringButton('停止全部测试','调试：停止全部测试','warn-lite')}</div><div class="engineering-note">已接入正式后端命令端点：加样臂→pipetting-tests（需工程会话）、条码扫描→reagent-scanner/qr、混匀→fluidics/mixers、清洗→fluidics/wash、校验光→scanners/calibration-light。命令经幂等与审计写入数据库；Mock/Twin 模式可执行，Real 模式 fail-closed。</div></section>${consoleHtml}</div>`
@@ -7077,6 +7077,41 @@ async function saveDebugComConfig() {
   log(`COM 口已保存到数据库：${body.portName || '未配置'} @ ${body.baudRate}，${body.dataBits}/${body.parity[0]}/${body.stopBits}`, 'ok');
   await readDebugComConfig();
 }
+
+// 「通信测试」：真实打开选中的 COM 口收发测试字节（POST /api/engineering/serial-debug/exchange，admin-only）。
+// 环回（RX↔TX 短接）下发什么收什么；串口助手配合时后端发助手收、助手发后端读。结果写入调试控制台。
+async function runSerialDebugExchange() {
+  const text = id => (document.getElementById(id)?.value || '').trim();
+  const port = text('debugComPortSelect');
+  if(!port) { log('请先选择 COM 口', 'warn'); return; }
+  const body = {
+    commandId: makeCommandId('serial-debug'),
+    portName: port,
+    baudRate: Number(text('debugBaudRateSelect')) || 115200,
+    dataBits: Number(text('debugDataBitsSelect').replace(/[^\d]/g, '')) || 8,
+    parity: text('debugParitySelect') === '无' ? 'None' : (text('debugParitySelect') || 'None'),
+    stopBits: text('debugStopBitsSelect').startsWith('2') ? 'Two' : 'One',
+    text: document.getElementById('debugComTestTextInput')?.value ?? 'PING',
+    timeoutMs: Number(document.getElementById('debugComTestTimeoutInput')?.value) || 1000,
+    reason: '调试：通信测试'
+  };
+  const consoleEl = document.getElementById('debugCommandConsole');
+  const writeLine = line => { if(consoleEl) consoleEl.textContent += '\n' + line; };
+  writeLine(`> [${new Date().toLocaleTimeString()}] 通信测试 ${body.portName} @ ${body.baudRate}，发送：${body.text}`);
+  try {
+    const res = await writeApi('/api/engineering/serial-debug/exchange', { method:'POST', body: JSON.stringify(body) });
+    const ok = !!res?.ok;
+    writeLine(`< [${new Date().toLocaleTimeString()}] ${ok ? '✓ 成功' : '✗ 失败'}${res?.errorCode ? ' (' + res.errorCode + ')' : ''}，耗时 ${res?.durationMs ?? '-'} ms`);
+    writeLine(`  发送 hex：${res?.sentHex || '-'}`);
+    writeLine(`  接收文本：${res?.receivedText ?? ''}`);
+    writeLine(`  接收 hex：${res?.receivedHex || '-'}`);
+    if(res?.message) writeLine(`  ${res.message}`);
+    log(`通信测试 ${body.portName}：${ok ? '成功' : '失败'}，接收 ${(res?.receivedHex || '').length / 2} 字节`, ok ? 'ok' : 'warn');
+  } catch(e) {
+    writeLine(`< [${new Date().toLocaleTimeString()}] ✗ 请求失败：${e?.message || e}`);
+    log(`通信测试失败：${e?.message || e}`, 'err');
+  }
+}
 // 用本机真实串口填充调试 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。保留当前选中值。
 // 用本机真实串口填充指定 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。调试/扫码器共用。
 // 注意：不保留渲染时的硬编码默认（如 COM1）——否则会把不存在的 COM1 混进真实端口列表。保存的端口由调用方随后回填。
@@ -7416,6 +7451,7 @@ async function dispatchEngineeringAction(action, btn) {
     if(action === '调试：校正加样精度确认') return await saveDebugPrecisionConfig('dispense');
     if(action === '调试：设置COM口参数') return await saveDebugComConfig();
     if(action === '调试：读取COM口参数') return await readDebugComConfig();
+    if(action === '调试：通信测试') return await runSerialDebugExchange();
     if(action === '调试：加样臂测试') return await runModuleArmTest();
     if(action === '调试：条码扫描测试') return await runModuleBarcodeTest();
     if(action === '调试：混匀测试') return await runModuleMixTest();

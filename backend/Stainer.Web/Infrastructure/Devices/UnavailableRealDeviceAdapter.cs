@@ -338,7 +338,36 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
 
     public Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
-    public Task<DeviceCommandResult> ScanSampleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
+    // Real 模式样本扫码下发：复用本类已实现的 ReceiveDcr55ResultAsync（走 DCR55 独立串口 endpoint，
+    // 触发 RDCMXEV1,P11,P20 + 读 CRLF 条码帧），把 Dcr55ScanResult 包装成 DeviceCommandResult。
+    // 与试剂扫码（主控 0x08）不同——样本/玻片条码由机械臂末端 DCR55 扫码枪读取。
+    // DCR55 不经主控白名单；transport 未配置时 ReceiveDcr55ResultAsync 自身 fail-closed 不发字节。
+    public async Task<DeviceCommandResult> ScanSampleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var scan = await ReceiveDcr55ResultAsync(cancellationToken);
+        var value = scan.Value;
+        var data = new Dictionary<string, object?>
+        {
+            ["scanSource"] = "Dcr55",
+            ["barcode"] = value?.Barcode,
+            ["rawText"] = value?.RawText,
+            ["scanStatus"] = value?.Status.ToString(),
+            ["responseHex"] = Convert.ToHexString(scan.ResponseBytes ?? [])
+        };
+
+        return new DeviceCommandResult(
+            scan.Ok,
+            scan.Status,
+            request.ModuleCode,
+            request.Action,
+            scan.ErrorCode,
+            scan.Ok ? "Sample barcode was read from the DCR55 scanner." : scan.Message,
+            startedAt,
+            DateTimeOffset.UtcNow,
+            scan.Ok,
+            data);
+    }
     // Real 模式试剂扫码下发：仅试剂二维码的启动/复位写真发字节到主控 0x08（TL_QR_START_SCAN 0x08/0x04、
     // TL_QR_RESET_SCAN 0x08/0x05），照 SetCoolingAsync 范本（构造帧 → ExchangeAsync → 解析 ACK → 脱敏摘要）。
     // 其余试剂 action（含试剂状态通知 reagent.stateChanged 等语义化动作）仍 RejectAsync，保持 fail-closed，不误触发扫码。
