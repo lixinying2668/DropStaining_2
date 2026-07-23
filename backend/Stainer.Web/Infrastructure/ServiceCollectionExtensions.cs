@@ -108,6 +108,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AppSettingsConfigService>();
         services.AddScoped<ReagentPositionConfigService>();
         services.AddScoped<ReagentPositionHardwareService>();
+        services.AddScoped<CoordinatePointHardwareService>();
+        services.AddScoped<RobotArmEngineeringService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();
@@ -117,11 +119,26 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WaterSupplyControlService>();
         services.AddScoped<MotionControlService>();
         var requestedMode = DeviceModes.Normalize(configuration["Device:Mode"]);
-        // 机械臂业务原子操作层：Mock 模式使用 Mock primitives；Real 模式 fail-closed，绝不回退 Mock。
-        services.AddScoped<IRobotMotionPrimitives>(_ =>
-            requestedMode == DeviceModes.Real
-                ? new UnavailableRobotMotionPrimitives()
-                : new MockRobotMotionPrimitives());
+        // 机械臂业务原子操作层：Mock 模式使用 Mock primitives；
+        // Real 模式下仅在 Device:SoconRobotMotion:Enabled=true 时接 SOCON（复用已审核 Z-SOPA 路径），
+        // 否则 UnavailableRobotMotionPrimitives 兜底 409——绝不回退 Mock。
+        services.AddScoped<IRobotMotionPrimitives>(serviceProvider =>
+        {
+            if (requestedMode != DeviceModes.Real)
+            {
+                return new MockRobotMotionPrimitives();
+            }
+
+            var soconRobotMotionOptions = serviceProvider.GetRequiredService<SoconRobotMotionPrimitivesOptions>();
+            if (!soconRobotMotionOptions.Enabled)
+            {
+                return new UnavailableRobotMotionPrimitives();
+            }
+
+            return new SoconRobotMotionPrimitives(
+                serviceProvider.GetRequiredService<IReagentHardwareActionClient>(),
+                soconRobotMotionOptions);
+        });
         services.AddScoped<IRobotArmAtomicActionService, RobotArmAtomicActionService>();
         // 记录器把原子动作净效果写入现有 Mock 运行状态 / 流水账（RobotArmState / NeedleState / PipettingOperations）。
         services.AddScoped<IRobotArmAtomicActionRecorder, MockStateAtomicActionRecorder>();
@@ -166,6 +183,10 @@ public static class ServiceCollectionExtensions
                 .Get<SoconReagentHardwareOptions>() ?? new SoconReagentHardwareOptions();
         services.AddSingleton(soconReagentHardwareOptions);
         services.AddSingleton<IReagentHardwareActionClient, SoconReagentHardwareActionClient>();
+        var soconRobotMotionOptions = configuration
+                .GetSection("Device:SoconRobotMotion")
+                .Get<SoconRobotMotionPrimitivesOptions>() ?? new SoconRobotMotionPrimitivesOptions();
+        services.AddSingleton(soconRobotMotionOptions);
 
             // DCR55-02 / P1-03-01：在 Real 模式下注册真实串口 Transport。
             // SerialPort 仅存在于 Dcr55SerialTransport / MainControllerSerialTransport（Transport 层），

@@ -25,6 +25,8 @@ public static partial class WebHostEndpointExtensions
         MapWashValveConfigEndpoints(app);
         MapAppSettingsEndpoints(app);
         MapReagentPositionConfigEndpoints(app);
+        MapCoordinatePointEndpoints(app);
+        MapRobotArmEndpoints(app);
         MapTraceabilityEndpoints(app);
         MapTaskAndReagentEndpoints(app);
         MapRunEndpoints(app);

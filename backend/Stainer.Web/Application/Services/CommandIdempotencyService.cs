@@ -202,6 +202,8 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             WashValveConfigMutationResponse x => x with { Replayed = true } as T ?? response,
             AppSettingsMutationResponse x => x with { Replayed = true } as T ?? response,
             ReagentPositionConfigMutationResponse x => x with { Replayed = true } as T ?? response,
+            CoordinatePointHardwareActionResponse x => x with { Replayed = true } as T ?? response,
+            RobotArmHardwareActionResponse x => x with { Replayed = true } as T ?? response,
             ScannerControlResponse x => x with { Replayed = true } as T ?? response,
             ReagentCoordinateGenerationResultResponse x => x with { Replayed = true } as T ?? response,
             MachineRunResponse x => x with { Replayed = true } as T ?? response,
