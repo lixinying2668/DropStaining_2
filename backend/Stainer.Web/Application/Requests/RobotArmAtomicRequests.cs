@@ -55,12 +55,18 @@ public sealed record WashInnerRequest(
     string? NeedleCode,
     int WashVolumeUl,
     int WasteVolumeUl,
-    string? Reason = null);
+    string? Reason = null,
+    // 可选：按调用指定内壁清洗高度 / 安全高度（单位 µm）。未传则回退到 RobotArmAtomicHeights 配置。
+    long? WashInnerZUm = null,
+    long? SafeZUm = null);
 
 public sealed record WashOuterRequest(
     string CommandId,
     string? NeedleCode,
-    string? Reason = null);
+    string? Reason = null,
+    // 可选：按调用指定外壁清洗高度 / 安全高度（单位 µm）。未传则回退到 RobotArmAtomicHeights 配置。
+    long? WashOuterZUm = null,
+    long? SafeZUm = null);
 
 // 单个原子步骤的语义化记录，用于结果追踪与日志展示（与底层 primitives 调用顺序一一对应）。
 public sealed record RobotArmAtomicStep(string Name, string? Detail = null);

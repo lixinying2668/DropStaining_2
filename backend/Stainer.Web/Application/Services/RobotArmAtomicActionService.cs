@@ -87,10 +87,14 @@ public sealed class RobotArmAtomicActionService(
         RequireCommandId(request.CommandId);
         RequirePositiveVolume(request.WashVolumeUl, nameof(request.WashVolumeUl));
         RequirePositiveVolume(request.WasteVolumeUl, nameof(request.WasteVolumeUl));
+        // 支持按调用指定内壁清洗高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
+        var washInnerZUm = request.WashInnerZUm ?? _heights.WashInnerZUm;
+        var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        // MoveZ(内壁清洗高度) -> Aspirate 清洗液 -> Dispense 废液；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.WashInner, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: 0, clearsNeedle: true, _heights.SafeZUm, cancellationToken, async steps =>
+            netVolumeUl: 0, clearsNeedle: true, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(_heights.WashInnerZUm, cancellationToken); steps.Add(Step("MoveZ→内壁清洗高度", _heights.WashInnerZUm));
+            await _primitives.MoveZAsync(washInnerZUm, cancellationToken); steps.Add(Step("MoveZ→内壁清洗高度", washInnerZUm));
             await _primitives.AspirateAsync(request.WashVolumeUl, cancellationToken); steps.Add(Step("Aspirate 清洗液", request.WashVolumeUl));
             await _primitives.DispenseAsync(request.WasteVolumeUl, cancellationToken); steps.Add(Step("Dispense 废液", request.WasteVolumeUl));
         });
@@ -99,10 +103,14 @@ public sealed class RobotArmAtomicActionService(
     public Task<RobotArmAtomicActionResult> WashOuterAsync(WashOuterRequest request, CancellationToken cancellationToken = default)
     {
         RequireCommandId(request.CommandId);
+        // 支持按调用指定外壁清洗高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
+        var washOuterZUm = request.WashOuterZUm ?? _heights.WashOuterZUm;
+        var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        // MoveZ(外壁清洗高度) -> 执行外壁清洗；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.WashOuter, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: 0, clearsNeedle: true, _heights.SafeZUm, cancellationToken, async steps =>
+            netVolumeUl: 0, clearsNeedle: true, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(_heights.WashOuterZUm, cancellationToken); steps.Add(Step("MoveZ→外壁清洗高度", _heights.WashOuterZUm));
+            await _primitives.MoveZAsync(washOuterZUm, cancellationToken); steps.Add(Step("MoveZ→外壁清洗高度", washOuterZUm));
             await _primitives.WashOuterAsync(cancellationToken); steps.Add(Step("外壁清洗", null));
         });
     }

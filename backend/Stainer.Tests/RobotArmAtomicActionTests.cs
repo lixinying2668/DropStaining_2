@@ -372,6 +372,67 @@ public sealed class RobotArmAtomicActionTests
         Assert.Equal(80, operation.VolumeUl);
     }
 
+    // [WashInner 契约] 按调用指定内壁清洗 / 安全高度覆盖配置；Z 顺序固定为 下降 -> 吸清洗液 -> 排废液 -> 回安全高度；复用 Mock 状态记录。
+    [Fact]
+    public async Task WashInner_honors_per_call_heights_descends_aspirates_dispenses_then_returns_safe_and_records()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+        var primitives = new MockRobotMotionPrimitives();
+        var recorder = new MockStateAtomicActionRecorder(dbContext);
+        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+
+        // 配置 Heights 中 WashInnerZUm=4_000、SafeZUm=90_000；这里用调用参数覆盖为 4_444 / 88_888。
+        var result = await service.WashInnerAsync(new WashInnerRequest(
+            "cmd-washinner-contract", "Needle1", 200, 200, "inner wash",
+            WashInnerZUm: 4_444, SafeZUm: 88_888));
+        Assert.True(result.Ok, result.Message);
+
+        // Z 顺序契约：先下降到指定内壁清洗高度 -> 吸清洗液 -> 排废液 -> 最后回指定安全高度。
+        Assert.Equal(
+        [
+            RobotPrimitiveCall.MoveZ(4_444),
+            RobotPrimitiveCall.Aspirate(200),
+            RobotPrimitiveCall.Dispense(200),
+            RobotPrimitiveCall.MoveZ(88_888)
+        ], primitives.Calls);
+
+        var arm = await dbContext.RobotArmStates.SingleAsync();
+        Assert.Equal(88_888, arm.CurrentZUm);
+        Assert.Equal("cmd-washinner-contract", arm.CurrentCommandId);
+        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-washinner-contract");
+        Assert.Equal(PipettingOperationTypes.WashNeedle, operation.OperationType);
+    }
+
+    // [WashOuter 契约] 按调用指定外壁清洗 / 安全高度覆盖配置；Z 顺序固定为 下降 -> 外壁清洗 -> 回安全高度；复用 Mock 状态记录。
+    [Fact]
+    public async Task WashOuter_honors_per_call_heights_descends_washes_then_returns_safe_and_records()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+        var primitives = new MockRobotMotionPrimitives();
+        var recorder = new MockStateAtomicActionRecorder(dbContext);
+        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+
+        // 配置 Heights 中 WashOuterZUm=5_000、SafeZUm=90_000；这里用调用参数覆盖为 5_555 / 88_888。
+        var result = await service.WashOuterAsync(new WashOuterRequest(
+            "cmd-washouter-contract", "Needle1", "outer wash",
+            WashOuterZUm: 5_555, SafeZUm: 88_888));
+        Assert.True(result.Ok, result.Message);
+
+        // Z 顺序契约：先下降到指定外壁清洗高度 -> 执行外壁清洗 -> 最后回指定安全高度。
+        Assert.Equal(
+        [
+            RobotPrimitiveCall.MoveZ(5_555),
+            RobotPrimitiveCall.WashOuter(),
+            RobotPrimitiveCall.MoveZ(88_888)
+        ], primitives.Calls);
+
+        var arm = await dbContext.RobotArmStates.SingleAsync();
+        Assert.Equal(88_888, arm.CurrentZUm);
+        Assert.Equal("cmd-washouter-contract", arm.CurrentCommandId);
+        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-washouter-contract");
+        Assert.Equal(PipettingOperationTypes.WashNeedle, operation.OperationType);
+    }
+
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
         var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-atomic-action-tests", Guid.NewGuid().ToString("N"), "stainer.db");
