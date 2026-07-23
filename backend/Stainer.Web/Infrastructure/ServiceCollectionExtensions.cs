@@ -121,8 +121,7 @@ public static class ServiceCollectionExtensions
                 ? new UnavailableRobotMotionPrimitives()
                 : new MockRobotMotionPrimitives());
         services.AddScoped<IRobotArmAtomicActionService, RobotArmAtomicActionService>();
-        // 记录器把原子动作净效果写入现有 Mock 运行状态 / 流水账（RobotArmState / NeedleState / PipettingOperations）。
-        services.AddScoped<IRobotArmAtomicActionRecorder, MockStateAtomicActionRecorder>();
+        services.AddScoped<IRobotArmProcessActionService, RobotArmProcessActionService>();
         services.AddSingleton<RobotArmAtomicHeights>();
         services.AddScoped<DeviceInitializationService>();
         services.AddScoped<DevicePrecheckService>();

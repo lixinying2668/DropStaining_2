@@ -26,15 +26,10 @@ public interface IRobotArmAtomicActionService
 
 public sealed class RobotArmAtomicActionService(
     IRobotMotionPrimitives primitives,
-    RobotArmAtomicHeights heights,
-    IRobotArmAtomicActionRecorder? recorder = null) : IRobotArmAtomicActionService
+    RobotArmAtomicHeights heights) : IRobotArmAtomicActionService
 {
     private readonly IRobotMotionPrimitives _primitives = primitives;
     private readonly RobotArmAtomicHeights _heights = heights;
-    // 可选的 Mock 运行状态 / 流水账记录器。单测不传（保持纯顺序断言）；运行时由 DI 注入，
-    // 让原子动作复用现有 RobotArmState / NeedleState / PipettingOperations 等 Mock 状态。
-    private readonly IRobotArmAtomicActionRecorder? _recorder = recorder;
-
     public Task<RobotArmAtomicActionResult> TakeLiquidAsync(TakeLiquidRequest request, CancellationToken cancellationToken = default)
     {
         RequireCommandId(request.CommandId);
@@ -122,7 +117,6 @@ public sealed class RobotArmAtomicActionService(
     }
 
     // 统一执行壳：按 body 给定的顺序驱动原语；无论 body 是否抛异常，finally 都抬升回安全高度（动作闭环强保证）。
-    // 成功后若注入了记录器，则把该原子动作的净效果写入现有 Mock 运行状态 / 流水账。
     // body 抛出的 BusinessRuleException（体积/CommandId 校验）在进入本方法前已校验；
     // 底层原语未来在真实/半真实 adapter 下若抛异常，异常会继续上抛，调用方可按现有异常约定处理。
     private async Task<RobotArmAtomicActionResult> RunAsync(
@@ -146,13 +140,6 @@ public sealed class RobotArmAtomicActionService(
         {
             await _primitives.MoveZAsync(zAxis, safeZUm, cancellationToken);
             steps.Add(Step("MoveZ→安全高度", safeZUm));
-        }
-
-        if (_recorder is not null)
-        {
-            await _recorder.RecordAsync(
-                new RobotArmAtomicActionContext(commandId, needleCode, action, netVolumeUl, clearsNeedle, reason, safeZUm),
-                cancellationToken);
         }
 
         var needle = string.IsNullOrWhiteSpace(needleCode) ? "auto" : needleCode;

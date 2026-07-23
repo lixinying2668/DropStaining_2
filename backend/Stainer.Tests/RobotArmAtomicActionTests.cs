@@ -224,37 +224,22 @@ public sealed class RobotArmAtomicActionTests
         ], primitives.Calls);
     }
 
-    // [P1] 注入 MockStateAtomicActionRecorder 后，原子动作应更新现有 Mock 运行状态与流水账。
     [Fact]
-    public async Task TakeLiquid_updates_mock_runtime_state_and_ledger_via_recorder()
+    public async Task TakeLiquid_does_not_write_engineering_state_or_ledger()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         var result = await service.TakeLiquidAsync(new TakeLiquidRequest("cmd-take-record", "Needle1", 100, "load ABC"));
         Assert.True(result.Ok, result.Message);
 
-        var arm = await dbContext.RobotArmStates.SingleAsync();
-        Assert.Equal(Heights.SafeZUm, arm.CurrentZUm);
-        Assert.Equal(MotionStatuses.Idle, arm.Status);
-        Assert.Equal("cmd-take-record", arm.CurrentCommandId);
-
-        var needle = await dbContext.NeedleStates.SingleAsync(x => x.NeedleCode == NeedleCodes.Needle1);
-        Assert.Equal(100, needle.VolumeUl);
-        Assert.True(needle.NeedsWash);
-        Assert.Equal(MotionStatuses.Completed, needle.Status);
-
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-take-record");
-        Assert.Equal(PipettingOperationTypes.Aspirate, operation.OperationType);
-        Assert.Equal(100, operation.VolumeUl);
-        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "atomic.action.takeliquid" && x.EntityId == operation.Id));
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-take-record");
     }
 
-    // [P1] 清洗类动作应清空针头，并写 WashNeedle 流水。
+    // [P1] 默认 AtomicAction 清洗动作不再清空工程针头状态，也不写 WashNeedle 流水。
     [Fact]
-    public async Task WashOuter_clears_needle_and_records_wash_ledger()
+    public async Task WashOuter_does_not_mutate_existing_engineering_state_or_ledger()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         dbContext.NeedleStates.Add(new NeedleState { NeedleCode = NeedleCodes.Needle1, NeedleNo = 1, VolumeUl = 80, NeedsWash = true, LoadedSourceType = NeedleLoadSourceTypes.ReagentBottle, LoadedReagentCode = "ABC", UpdatedAtUtc = DateTimeOffset.UtcNow });
@@ -262,29 +247,30 @@ public sealed class RobotArmAtomicActionTests
         await dbContext.SaveChangesAsync();
 
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         var result = await service.WashOuterAsync(new WashOuterRequest("cmd-wash-record", "Needle1"));
         Assert.True(result.Ok, result.Message);
 
         var needle = await dbContext.NeedleStates.SingleAsync(x => x.NeedleCode == NeedleCodes.Needle1);
-        Assert.Equal(0, needle.VolumeUl);
-        Assert.False(needle.NeedsWash);
-        Assert.Equal(NeedleLoadSourceTypes.Empty, needle.LoadedSourceType);
+        Assert.Equal(80, needle.VolumeUl);
+        Assert.True(needle.NeedsWash);
+        Assert.Equal(NeedleLoadSourceTypes.ReagentBottle, needle.LoadedSourceType);
+        Assert.Equal("ABC", needle.LoadedReagentCode);
 
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-wash-record");
-        Assert.Equal(PipettingOperationTypes.WashNeedle, operation.OperationType);
+        var arm = await dbContext.RobotArmStates.SingleAsync();
+        Assert.Null(arm.CurrentCommandId);
+        Assert.Equal(MotionStatuses.Idle, arm.Status);
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-wash-record");
     }
 
-    // [TakeLiquid 契约] 按调用指定吸液 / 安全高度时覆盖配置；顺序固定为 下降 -> 吸液 -> 回安全高度；并复用 Mock 状态记录。
+    // [TakeLiquid 契约] 按调用指定吸液 / 安全高度时覆盖配置；顺序固定为 下降 -> 吸液 -> 回安全高度；默认不写工程状态。
     [Fact]
-    public async Task TakeLiquid_honors_per_call_heights_descends_aspirates_then_returns_safe_and_records()
+    public async Task TakeLiquid_honors_per_call_heights_descends_aspirates_then_returns_safe_without_writes()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         // 配置 Heights 中 AspirateZUm=1_000、SafeZUm=90_000；这里用调用参数覆盖为 7_777 / 88_888。
         var result = await service.TakeLiquidAsync(new TakeLiquidRequest(
@@ -300,23 +286,17 @@ public sealed class RobotArmAtomicActionTests
             RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
-        // 复用现有 Mock 状态：机械臂停在本次安全高度，流水账落库。
-        var arm = await dbContext.RobotArmStates.SingleAsync();
-        Assert.Equal(88_888, arm.CurrentZUm);
-        Assert.Equal("cmd-takeliquid-contract", arm.CurrentCommandId);
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-takeliquid-contract");
-        Assert.Equal(PipettingOperationTypes.Aspirate, operation.OperationType);
-        Assert.Equal(100, operation.VolumeUl);
+        // 默认 AtomicAction 路径只返回动作结果，不写工程状态或流水。
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-takeliquid-contract");
     }
 
-    // [DispenseLiquid 契约] 按调用指定滴液 / 安全高度覆盖配置；顺序固定为 下降 -> 排液 -> 回安全高度；复用 Mock 状态记录。
+    // [DispenseLiquid 契约] 按调用指定滴液 / 安全高度覆盖配置；顺序固定为 下降 -> 排液 -> 回安全高度；默认不写工程状态。
     [Fact]
-    public async Task DispenseLiquid_honors_per_call_heights_descends_dispenses_then_returns_safe_and_records()
+    public async Task DispenseLiquid_honors_per_call_heights_descends_dispenses_then_returns_safe_without_writes()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         // 配置 Heights 中 DispenseZUm=3_000、SafeZUm=90_000；这里用调用参数覆盖为 6_666 / 88_888。
         var result = await service.DispenseLiquidAsync(new DispenseLiquidRequest(
@@ -332,23 +312,17 @@ public sealed class RobotArmAtomicActionTests
             RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
-        // 复用现有 Mock 状态：机械臂停在本次安全高度，流水账落库。
-        var arm = await dbContext.RobotArmStates.SingleAsync();
-        Assert.Equal(88_888, arm.CurrentZUm);
-        Assert.Equal("cmd-dispenseliquid-contract", arm.CurrentCommandId);
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-dispenseliquid-contract");
-        Assert.Equal(PipettingOperationTypes.Dispense, operation.OperationType);
-        Assert.Equal(60, operation.VolumeUl);
+        // 默认 AtomicAction 路径只返回动作结果，不写工程状态或流水。
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-dispenseliquid-contract");
     }
 
-    // [PrepareMix 契约] 按调用指定配液 / 安全高度覆盖配置；顺序固定为 下降 -> 排液 -> 回安全高度；复用 Mock 状态记录。
+    // [PrepareMix 契约] 按调用指定配液 / 安全高度覆盖配置；顺序固定为 下降 -> 排液 -> 回安全高度；默认不写工程状态。
     [Fact]
-    public async Task PrepareMix_honors_per_call_heights_descends_dispenses_then_returns_safe_and_records()
+    public async Task PrepareMix_honors_per_call_heights_descends_dispenses_then_returns_safe_without_writes()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         // 配置 Heights 中 MixZUm=2_000、SafeZUm=90_000；这里用调用参数覆盖为 5_555 / 88_888。
         var result = await service.PrepareMixAsync(new PrepareMixRequest(
@@ -364,22 +338,16 @@ public sealed class RobotArmAtomicActionTests
             RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
-        var arm = await dbContext.RobotArmStates.SingleAsync();
-        Assert.Equal(88_888, arm.CurrentZUm);
-        Assert.Equal("cmd-preparemix-contract", arm.CurrentCommandId);
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-preparemix-contract");
-        Assert.Equal(PipettingOperationTypes.Dispense, operation.OperationType);
-        Assert.Equal(80, operation.VolumeUl);
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-preparemix-contract");
     }
 
-    // [WashInner 契约] 按调用指定内壁清洗 / 安全高度覆盖配置；Z 顺序固定为 下降 -> 吸清洗液 -> 排废液 -> 回安全高度；复用 Mock 状态记录。
+    // [WashInner 契约] 按调用指定内壁清洗 / 安全高度覆盖配置；Z 顺序固定为 下降 -> 吸清洗液 -> 排废液 -> 回安全高度；默认不写工程状态。
     [Fact]
-    public async Task WashInner_honors_per_call_heights_descends_aspirates_dispenses_then_returns_safe_and_records()
+    public async Task WashInner_honors_per_call_heights_descends_aspirates_dispenses_then_returns_safe_without_writes()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         // 配置 Heights 中 WashInnerZUm=4_000、SafeZUm=90_000；这里用调用参数覆盖为 4_444 / 88_888。
         var result = await service.WashInnerAsync(new WashInnerRequest(
@@ -396,21 +364,16 @@ public sealed class RobotArmAtomicActionTests
             RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
-        var arm = await dbContext.RobotArmStates.SingleAsync();
-        Assert.Equal(88_888, arm.CurrentZUm);
-        Assert.Equal("cmd-washinner-contract", arm.CurrentCommandId);
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-washinner-contract");
-        Assert.Equal(PipettingOperationTypes.WashNeedle, operation.OperationType);
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-washinner-contract");
     }
 
-    // [WashOuter 契约] 按调用指定外壁清洗 / 安全高度覆盖配置；Z 顺序固定为 下降 -> 外壁清洗 -> 回安全高度；复用 Mock 状态记录。
+    // [WashOuter 契约] 按调用指定外壁清洗 / 安全高度覆盖配置；Z 顺序固定为 下降 -> 外壁清洗 -> 回安全高度；默认不写工程状态。
     [Fact]
-    public async Task WashOuter_honors_per_call_heights_descends_washes_then_returns_safe_and_records()
+    public async Task WashOuter_honors_per_call_heights_descends_washes_then_returns_safe_without_writes()
     {
         await using var dbContext = await CreateMigratedContextAsync();
         var primitives = new MockRobotMotionPrimitives();
-        var recorder = new MockStateAtomicActionRecorder(dbContext);
-        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+        var service = new RobotArmAtomicActionService(primitives, Heights);
 
         // 配置 Heights 中 WashOuterZUm=5_000、SafeZUm=90_000；这里用调用参数覆盖为 5_555 / 88_888。
         var result = await service.WashOuterAsync(new WashOuterRequest(
@@ -426,11 +389,15 @@ public sealed class RobotArmAtomicActionTests
             RobotPrimitiveCall.MoveZ(RobotZAxis.Z1, 88_888)
         ], primitives.Calls);
 
-        var arm = await dbContext.RobotArmStates.SingleAsync();
-        Assert.Equal(88_888, arm.CurrentZUm);
-        Assert.Equal("cmd-washouter-contract", arm.CurrentCommandId);
-        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-washouter-contract");
-        Assert.Equal(PipettingOperationTypes.WashNeedle, operation.OperationType);
+        await AssertNoEngineeringWritesAsync(dbContext, "cmd-washouter-contract");
+    }
+
+    private static async Task AssertNoEngineeringWritesAsync(StainerDbContext dbContext, string commandId)
+    {
+        Assert.False(await dbContext.RobotArmStates.AnyAsync(x => x.CurrentCommandId == commandId || x.DeviceCommandExecutionId == commandId));
+        Assert.False(await dbContext.NeedleStates.AnyAsync(x => x.CurrentCommandId == commandId || x.DeviceCommandExecutionId == commandId));
+        Assert.False(await dbContext.PipettingOperations.AnyAsync(x => x.DeviceCommandExecutionId == commandId));
+        Assert.False(await dbContext.AuditLogs.AnyAsync(x => x.Action.StartsWith("atomic.action.") && x.Message.Contains(commandId)));
     }
 
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
