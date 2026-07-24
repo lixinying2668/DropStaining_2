@@ -366,7 +366,105 @@ public sealed class FluidicsControlMockTests
         Assert.Equal(DeviceConnectionStatuses.Faulted, deviceState!.Modules.Single(x => x.ModuleCode == DeviceModules.LiquidLevel).ConnectionStatus);
     }
 
-    private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock)
+    [Fact]
+    public async Task Real_mode_pump_run_stop_use_main_controller_adapter_and_target_wash_rejects()
+    {
+        var adapter = new FakeRealPumpDeviceAdapter();
+        var context = CreateFactory(deviceMode: DeviceModes.Real, deviceAdapterOverride: adapter);
+        await using var factory = context.Factory;
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+
+        var run = await PostJsonAsync<FluidicsMutationResponse>(client, "/api/fluidics/pumps/run", new
+        {
+            commandId = "cmd-real-pump-run",
+            pwmChannelCode = "PWM2",
+            speedPercent = 55,
+            reason = "real pump run"
+        });
+        Assert.Equal(FluidicsStatuses.Running, run.State.Pumps.Single(x => x.PwmChannelCode == "PWM2").Status);
+        Assert.Equal(55, run.State.Pumps.Single(x => x.PwmChannelCode == "PWM2").SpeedPercent);
+        Assert.Equal("set-pwm", adapter.PumpRequests[0].Action);
+        Assert.Equal(2, Convert.ToInt32(adapter.PumpRequests[0].Parameters["pwmId"]));
+        Assert.Equal(55, Convert.ToInt32(adapter.PumpRequests[0].Parameters["value"]));
+
+        var stop = await PostJsonAsync<FluidicsMutationResponse>(client, "/api/fluidics/pumps/stop", new
+        {
+            commandId = "cmd-real-pump-stop",
+            pwmChannelCode = "PWM2",
+            reason = "real pump stop"
+        });
+        Assert.Equal(FluidicsStatuses.Stopped, stop.State.Pumps.Single(x => x.PwmChannelCode == "PWM2").Status);
+        Assert.Equal(0, Convert.ToInt32(adapter.PumpRequests[1].Parameters["value"]));
+
+        var rejectedWash = await client.PostAsJsonAsync("/api/fluidics/wash", new
+        {
+            commandId = "cmd-real-wash-inner",
+            targetPointCode = "WashInnerLeft",
+            speedPercent = 60,
+            durationMs = 1,
+            reason = "real sample wash"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, rejectedWash.StatusCode);
+        Assert.Equal(2, adapter.PumpRequests.Count);
+        Assert.Contains("wash_target_real_not_implemented", await rejectedWash.Content.ReadAsStringAsync());
+    }
+
+    private sealed class FakeRealPumpDeviceAdapter : IDeviceAdapter
+    {
+        public List<DeviceOperationRequest> PumpRequests { get; } = [];
+        public string Mode => DeviceModes.Real;
+        public string Name => nameof(FakeRealPumpDeviceAdapter);
+
+        public Task<DeviceStatusSnapshot> GetStatusAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new DeviceStatusSnapshot(Mode, Name, true, 1, DateTimeOffset.UtcNow, [], []));
+
+        public Task<DeviceCommandResult> RunPumpAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+        {
+            PumpRequests.Add(request);
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult(new DeviceCommandResult(
+                true,
+                DeviceCommandStatuses.Succeeded,
+                request.ModuleCode,
+                request.Action,
+                null,
+                "Pump command accepted.",
+                now,
+                now,
+                true,
+                new Dictionary<string, object?>()));
+        }
+
+        public Task<DeviceCommandResult> GetHealthAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ScanSampleAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> QueryLisAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> SetTemperatureAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> SetCoolingAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ReadLiquidLevelsAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> MixAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> MoveRobotAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> OperateNeedlesAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> PipetteAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> WashNeedlesAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> PrepareDabAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceCommandResult> ExecuteWorkflowActionAsync(DeviceOperationRequest r, CancellationToken ct = default) => Reject(r);
+        public Task<DeviceFaultControlResult> ConfigureFaultAsync(DeviceFaultCommand c, CancellationToken ct = default) => FaultControl();
+        public Task<DeviceFaultControlResult> ClearFaultsAsync(DeviceFaultClearCommand c, CancellationToken ct = default) => FaultControl();
+
+        private static Task<DeviceCommandResult> Reject(DeviceOperationRequest request)
+        {
+            var now = DateTimeOffset.UtcNow;
+            return Task.FromResult(new DeviceCommandResult(false, DeviceCommandStatuses.NotSupported, request.ModuleCode, request.Action, "not_supported", "Not supported by fake pump adapter.", now, now, false, new Dictionary<string, object?>()));
+        }
+
+        private static Task<DeviceFaultControlResult> FaultControl() =>
+            Task.FromResult(new DeviceFaultControlResult(false, "Not supported by fake pump adapter.", new DeviceStatusSnapshot(DeviceModes.Real, nameof(FakeRealPumpDeviceAdapter), false, 0, DateTimeOffset.UtcNow, [], [])));
+    }
+
+    private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock, IDeviceAdapter? deviceAdapterOverride = null)
     {
         var root = databasePath is null
             ? Path.Combine(TestPaths.TempRoot, "stainer-fluidics-tests", Guid.NewGuid().ToString("N"))
@@ -392,6 +490,10 @@ public sealed class FluidicsControlMockTests
                 builder.UseSetting(pair.Key, pair.Value);
             }
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
+            if (deviceAdapterOverride is not null)
+            {
+                builder.ConfigureServices(services => services.AddSingleton(deviceAdapterOverride));
+            }
         });
         return new FactoryContext(factory, databasePath);
     }

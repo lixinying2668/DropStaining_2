@@ -614,7 +614,17 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
         byte[] requestBytes;
         byte expectedSub;
         string operation;
-        if (string.Equals(request.Action, "set-pwm", StringComparison.OrdinalIgnoreCase))
+        if (TryBuildBusinessWashPwm(request, out var businessPwmId, out var businessValue, out var businessErrorCode, out var businessErrorMessage))
+        {
+            requestBytes = MainControllerProtocol.BuildSetPwmValueRequest((byte)businessPwmId, (short)businessValue);
+            expectedSub = MainControllerProtocol.PwmSetIdValueSub;
+            operation = "set-wash-pwm-business";
+        }
+        else if (businessErrorCode is not null)
+        {
+            return CoolingFail(request, startedAt, businessErrorCode, businessErrorMessage!, steps);
+        }
+        else if (string.Equals(request.Action, "set-pwm", StringComparison.OrdinalIgnoreCase))
         {
             if (!TryConvertToInt32(request.Parameters.GetValueOrDefault("pwmId"), out var pwmId) || pwmId < 0 || pwmId > 3)
             {
@@ -688,6 +698,84 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
                 ["communication"] = BuildCoolingCommunication(steps)
             });
     }
+
+    private static bool TryBuildBusinessWashPwm(
+        DeviceOperationRequest request,
+        out int pwmId,
+        out int value,
+        out string? errorCode,
+        out string? errorMessage)
+    {
+        pwmId = 0;
+        value = 0;
+        errorCode = null;
+        errorMessage = null;
+
+        if (!request.Action.Contains("wash", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!TryResolvePwmId(request.Parameters, out pwmId))
+        {
+            errorCode = "pwm_id_missing";
+            errorMessage = "PWM id, pwmChannelCode, or drawerCode is required for wash PWM control.";
+            return false;
+        }
+
+        if (request.Action.Contains("stop", StringComparison.OrdinalIgnoreCase))
+        {
+            value = 0;
+            return true;
+        }
+
+        if (!TryConvertToInt32(request.Parameters.GetValueOrDefault("value")
+            ?? request.Parameters.GetValueOrDefault("speedPercent")
+            ?? request.Parameters.GetValueOrDefault("pwm"), out value) || value < -100 || value > 100)
+        {
+            errorCode = "pwm_value_out_of_range";
+            errorMessage = "PWM value (value/speedPercent -100..100) is required for wash PWM control.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryResolvePwmId(IReadOnlyDictionary<string, object?> parameters, out int pwmId)
+    {
+        foreach (var key in new[] { "pwmId", "pwmChannelNo", "channelNo" })
+        {
+            if (parameters.TryGetValue(key, out var value)
+                && value is not null
+                && TryConvertToInt32(value, out pwmId)
+                && pwmId is >= 0 and <= 3)
+            {
+                return true;
+            }
+        }
+
+        var pwmChannelCode = Convert.ToString(parameters.GetValueOrDefault("pwmChannelCode"));
+        if (!string.IsNullOrWhiteSpace(pwmChannelCode)
+            && pwmChannelCode.Trim().StartsWith("PWM", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(pwmChannelCode.Trim()[3..], out pwmId)
+            && pwmId is >= 0 and <= 3)
+        {
+            return true;
+        }
+
+        var drawerCode = Convert.ToString(parameters.GetValueOrDefault("drawerCode"))?.Trim().ToUpperInvariant();
+        pwmId = drawerCode switch
+        {
+            "A" => 0,
+            "B" => 1,
+            "C" => 2,
+            "D" => 3,
+            _ => -1
+        };
+
+        return pwmId is >= 0 and <= 3;
+    }
+
     public Task<DeviceCommandResult> ReadLiquidLevelsAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> MixAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);
     public Task<DeviceCommandResult> MoveRobotAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => RejectAsync(request);

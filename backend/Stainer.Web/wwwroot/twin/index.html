@@ -3466,9 +3466,196 @@ function showChannelDetail(channelId) {
   box.innerHTML = `<div class="channel-config-box" id="channel${channelId}ConfigBox" data-control-id="channel${channelId}ConfigBox">
     <div class="channel-config-line"><strong>通道${channelId}状态</strong><span>状态：${escapeHtml(STATUS_TEXT[state] || state)}　进度：${Math.round(ch.progress)}%　玻片染色：${escapeHtml(ch.slides.join(' / '))}　条码入库：${ch.barcodeReady ? '已开始/已入库' : '未开始'}</span></div>
     ${renderChannelBindingEditor(channelId, 'status')}
+    ${renderChannelPwmPumpConfig(channelId)}
   </div>`;
   bindChannelBindingHandlers(box);
+  bindChannelPwmPumpConfigHandlers(box, channelId);
+  readChannelPwmPumpState(channelId).catch(err => console.warn('PWM清洗泵状态读取失败', err));
   updateVisualStates(); renderChannelCards();
+}
+const CHANNEL_PWM_CONFIG_STORAGE_KEY = 'digitalTwinChannelPwmPumpConfig';
+function defaultChannelPwmCode(channelId) {
+  const id = Math.max(1, Math.min(4, Number(channelId) || 1));
+  return `PWM${id - 1}`;
+}
+function channelPwmBaseId(channelId) { return `channel${Number(channelId) || 1}PwmPump`; }
+function loadChannelPwmPumpConfigs() {
+  try { return JSON.parse(localStorage.getItem(CHANNEL_PWM_CONFIG_STORAGE_KEY) || '{}') || {}; }
+  catch(_) { return {}; }
+}
+function getChannelPwmPumpConfig(channelId) {
+  const id = String(Number(channelId) || 1);
+  const saved = loadChannelPwmPumpConfigs()[id] || {};
+  return {
+    speedPercent: Number.isFinite(Number(saved.speedPercent)) ? Number(saved.speedPercent) : 60,
+    durationMs: Number.isFinite(Number(saved.durationMs)) && Number(saved.durationMs) > 0 ? Number(saved.durationMs) : ''
+  };
+}
+function saveChannelPwmPumpConfig(channelId) {
+  const id = String(Number(channelId) || 1);
+  const base = channelPwmBaseId(channelId);
+  const all = loadChannelPwmPumpConfigs();
+  all[id] = {
+    speedPercent: readChannelPwmPumpSpeed(channelId),
+    durationMs: readChannelPwmPumpDuration(channelId) || null
+  };
+  localStorage.setItem(CHANNEL_PWM_CONFIG_STORAGE_KEY, JSON.stringify(all));
+  log(`通道${id}清洗泵配置已保存：${defaultChannelPwmCode(channelId)} @ ${all[id].speedPercent}%${all[id].durationMs ? `，${all[id].durationMs}ms` : ''}`, 'ok', Number(id));
+}
+function renderChannelPwmPumpConfig(channelId) {
+  const base = channelPwmBaseId(channelId);
+  const cfg = getChannelPwmPumpConfig(channelId);
+  const pwmCode = defaultChannelPwmCode(channelId);
+  return `<section class="object-engineering-card" id="${base}Card" data-control-id="${base}Card">
+    <strong>通道${channelId}清洗泵配置<span class="engineering-pill">${pwmCode}</span></strong>
+    <div class="object-form-grid three">
+      <label>PWM速度 / %<input id="${base}SpeedInput" data-control-id="${base}SpeedInput" type="number" min="-100" max="100" step="1" value="${escapeHtml(String(cfg.speedPercent))}"></label>
+      <label>运行时长 / ms<input id="${base}DurationInput" data-control-id="${base}DurationInput" type="number" min="0" step="1" value="${escapeHtml(String(cfg.durationMs))}" placeholder="空=持续运行"></label>
+      <label>当前状态<input id="${base}StatusInput" data-control-id="${base}StatusInput" value="未查询" readonly></label>
+      <label>当前速度<input id="${base}CurrentSpeedInput" data-control-id="${base}CurrentSpeedInput" value="—" readonly></label>
+      <label>故障信息<input id="${base}FaultInput" data-control-id="${base}FaultInput" value="未读取" readonly></label>
+    </div>
+    <div class="object-actions four">
+      <button type="button" data-channel-pwm-action="save" data-channel-id="${channelId}">保存配置</button>
+      <button type="button" class="primary-lite" data-channel-pwm-action="run" data-channel-id="${channelId}">启动清洗泵</button>
+      <button type="button" class="warn-lite" data-channel-pwm-action="stop" data-channel-id="${channelId}">停止清洗泵</button>
+      <button type="button" data-channel-pwm-action="read" data-channel-id="${channelId}">查询状态</button>
+    </div>
+    <div class="object-note">默认映射：通道1→PWM0、通道2→PWM1、通道3→PWM2、通道4→PWM3。该配置只控制真实 PWM 清洗泵，不映射 WashInnerLeft/WashOuterLeft。</div>
+  </section>`;
+}
+function selectedChannelPwmPumpCode(channelId) {
+  return defaultChannelPwmCode(channelId);
+}
+function readChannelPwmPumpSpeed(channelId) {
+  const raw = Number(document.getElementById(`${channelPwmBaseId(channelId)}SpeedInput`)?.value);
+  return Math.max(-100, Math.min(100, Number.isFinite(raw) ? Math.round(raw) : 0));
+}
+function readChannelPwmPumpDuration(channelId) {
+  const raw = Number(document.getElementById(`${channelPwmBaseId(channelId)}DurationInput`)?.value);
+  return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : null;
+}
+function channelPwmPumpStatusText(status) {
+  const key = String(status || '').trim();
+  return ({
+    Idle:'空闲',
+    Running:'运行中',
+    Completed:'已完成',
+    Stopped:'已停止',
+    TimedOut:'已超时',
+    Faulted:'故障',
+    Disconnected:'已断开',
+    Unknown:'未知'
+  })[key] || '未知';
+}
+function channelPwmPumpDirectionText(direction) {
+  const key = String(direction || '').trim();
+  return ({
+    Forward:'正转',
+    Reverse:'反转',
+    Stopped:'已停止'
+  })[key] || '未知方向';
+}
+function channelPwmPumpFaultText(faultCode, faultMessage) {
+  const code = String(faultCode || '').trim();
+  const message = String(faultMessage || '').trim();
+  if(!code && !message) return '无故障';
+  const normalized = code.toLowerCase();
+  const mapped = ({
+    failure:'执行失败',
+    timeout:'执行超时',
+    sensorfailure:'传感器故障',
+    disconnected:'设备断开',
+    unknown:'未知故障',
+    mock_fault:'模拟故障',
+    pump_not_ready:'清洗泵未就绪',
+    pump_disconnected:'清洗泵已断开',
+    pump_channel_not_found:'未找到清洗泵通道',
+    pump_pwm_channel_invalid:'PWM通道无效',
+    pump_speed_invalid:'PWM速度超出范围',
+    wash_pwm_command_failed:'PWM清洗泵命令失败',
+    wash_pwm_write_failed:'PWM清洗泵写入失败',
+    real_adapter_not_implemented:'真实设备适配器未实现',
+    real_transport_not_configured:'真实设备通讯未配置',
+    device_transport_failed:'设备通讯失败',
+    main_controller_response_missing:'主控未返回响应',
+    main_controller_response_ambiguous:'主控响应不唯一',
+    main_controller_truncated_frame:'主控响应帧不完整'
+  })[normalized];
+  if(mapped) return mapped;
+  if(normalized.startsWith('main_controller_')) return '主控通讯异常';
+  return '未识别故障';
+}
+function formatChannelPwmUpdatedAt(updated) {
+  if(!updated) return '';
+  const dt = new Date(updated);
+  if(Number.isNaN(dt.getTime())) return '';
+  return dt.toLocaleString('zh-CN', { hour12:false });
+}
+function updateChannelPwmPumpStatus(channelId, pump) {
+  const base = channelPwmBaseId(channelId);
+  const setVal = (suffix, value) => { const el = document.getElementById(`${base}${suffix}`); if(el) el.value = value; };
+  if(!pump) {
+    setVal('StatusInput', '未找到该 PWM 通道');
+    setVal('CurrentSpeedInput', '—');
+    setVal('FaultInput', '未读取');
+    return;
+  }
+  const status = pump.status || pump.Status || 'Unknown';
+  const speed = pump.speedPercent ?? pump.SpeedPercent ?? 0;
+  const direction = pump.direction || pump.Direction || 'Stopped';
+  const updated = pump.updatedAtUtc || pump.UpdatedAtUtc || '';
+  const fault = pump.faultCode || pump.FaultCode || '';
+  const faultMessage = pump.faultMessage || pump.FaultMessage || '';
+  const updatedText = formatChannelPwmUpdatedAt(updated);
+  setVal('StatusInput', `状态：${channelPwmPumpStatusText(status)}；方向：${channelPwmPumpDirectionText(direction)}${updatedText ? '；更新时间：' + updatedText : ''}`);
+  setVal('CurrentSpeedInput', `${speed}%`);
+  setVal('FaultInput', channelPwmPumpFaultText(fault, faultMessage));
+}
+async function readChannelPwmPumpState(channelId) {
+  const code = selectedChannelPwmPumpCode(channelId);
+  const state = await backendApi('/api/fluidics/state');
+  const pumps = Array.isArray(state?.pumps) ? state.pumps : [];
+  const pump = pumps.find(p => String(p.pwmChannelCode || p.PwmChannelCode || '').toUpperCase() === code.toUpperCase());
+  updateChannelPwmPumpStatus(channelId, pump);
+  log(`通道${channelId}清洗泵状态：${code} ${pump ? `${channelPwmPumpStatusText(pump.status || pump.Status)} @ ${pump.speedPercent ?? pump.SpeedPercent ?? 0}%` : '未找到'}`, pump ? 'ok' : 'warn', channelId);
+  return pump;
+}
+async function runChannelPwmPump(channelId) {
+  saveChannelPwmPumpConfig(channelId);
+  const code = selectedChannelPwmPumpCode(channelId);
+  const speed = readChannelPwmPumpSpeed(channelId);
+  const durationMs = readChannelPwmPumpDuration(channelId);
+  const body = { CommandId: makeCommandId(`channel-${channelId}-pwm-run`), PwmChannelCode: code, SpeedPercent: speed, Reason:`通道${channelId}清洗泵启动` };
+  if(durationMs != null) body.DurationMs = durationMs;
+  await writeApi('/api/fluidics/pumps/run', { method:'POST', body: JSON.stringify(body) });
+  log(`通道${channelId}清洗泵启动已下发：${code} @ ${speed}%${durationMs != null ? `，${durationMs}ms 后自动停止` : ''}`, 'ok', channelId);
+  await readChannelPwmPumpState(channelId);
+  await loadDatabaseSnapshot();
+}
+async function stopChannelPwmPump(channelId) {
+  const code = selectedChannelPwmPumpCode(channelId);
+  await writeApi('/api/fluidics/pumps/stop', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId(`channel-${channelId}-pwm-stop`), PwmChannelCode: code, Reason:`通道${channelId}清洗泵停止` }) });
+  log(`通道${channelId}清洗泵停止已下发：${code}`, 'ok', channelId);
+  await readChannelPwmPumpState(channelId);
+  await loadDatabaseSnapshot();
+}
+function bindChannelPwmPumpConfigHandlers(root, channelId) {
+  root.querySelectorAll('[data-channel-pwm-action]').forEach(btn => {
+    if(btn.dataset.channelPwmActionBound === 'true') return;
+    btn.dataset.channelPwmActionBound = 'true';
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.channelId || channelId);
+      const action = btn.dataset.channelPwmAction;
+      flashControl(btn);
+      try {
+        if(action === 'save') return saveChannelPwmPumpConfig(id);
+        if(action === 'run') return await runChannelPwmPump(id);
+        if(action === 'stop') return await stopChannelPwmPump(id);
+        if(action === 'read') return await readChannelPwmPumpState(id);
+      } catch(e) { /* routed by writeApi */ }
+    });
+  });
 }
 function showPortDetail(title, lines=[]) { setInfoPanel(title, lines); showSideTab('status'); }
 function scannerLabelByKey(key) { return key === 'sample' ? '样本扫码器（机械臂随动相机）' : '试剂扫码器'; }

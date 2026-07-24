@@ -359,6 +359,54 @@ public sealed class OfflineRealDeviceAdapterTests
     }
 
     [Fact]
+    public async Task RunPumpAsync_business_wash_maps_pwm_channel_code_to_single_channel_frame()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(
+            MainControllerProtocol.BuildSetPwmValueRequest(2, -40),
+            Response(MainControllerProtocol.PwmClass, MainControllerProtocol.PwmSetIdValueSub, [0x01, 0x02]));
+
+        var result = await adapter.RunPumpAsync(new DeviceOperationRequest(
+            new DeviceCommandContext("cmd-pwm-business-wash", null, "test", nameof(OfflineRealDeviceAdapterTests)),
+            DeviceModules.Pump,
+            "Wash",
+            new Dictionary<string, object?>
+            {
+                ["pwmChannelCode"] = "PWM2",
+                ["speedPercent"] = -40
+            }));
+
+        Assert.True(result.Ok, result.Message);
+        var frame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal(MainControllerProtocol.PwmSetIdValueSub, frame.SubClass);
+        Assert.Equal<byte>([0x02, 0xD8, 0xFF], frame.Payload);
+    }
+
+    [Fact]
+    public async Task RunPumpAsync_business_wash_stop_maps_drawer_to_zero_pwm()
+    {
+        var fake = new InMemoryFakeDeviceByteTransport();
+        IDeviceAdapter adapter = new UnavailableRealDeviceAdapter(fake);
+        fake.EnqueueExchange(
+            MainControllerProtocol.BuildSetPwmValueRequest(3, 0),
+            Response(MainControllerProtocol.PwmClass, MainControllerProtocol.PwmSetIdValueSub, [0x01, 0x03]));
+
+        var result = await adapter.RunPumpAsync(new DeviceOperationRequest(
+            new DeviceCommandContext("cmd-pwm-business-wash-stop", null, "test", nameof(OfflineRealDeviceAdapterTests)),
+            DeviceModules.Pump,
+            "WashStop",
+            new Dictionary<string, object?>
+            {
+                ["drawerCode"] = "D"
+            }));
+
+        Assert.True(result.Ok, result.Message);
+        var frame = IceImmunoSerialProtocol.DecodeFrame(fake.ExchangeRequests[0].RequestBytes);
+        Assert.Equal<byte>([0x03, 0x00, 0x00], frame.Payload);
+    }
+
+    [Fact]
     public async Task RunPumpAsync_set_all_pwm_writes_four_channel_frame_and_confirms_ack()
     {
         var fake = new InMemoryFakeDeviceByteTransport();

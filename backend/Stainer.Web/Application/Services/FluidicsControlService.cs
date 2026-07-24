@@ -78,7 +78,11 @@ public sealed class FluidicsControlService(
             actor,
             async () =>
             {
-                EnsureMockMode();
+                if (!string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
+                {
+                    return await RunPumpViaMainControllerAsync(request, actor, cancellationToken);
+                }
+
                 await Gate.WaitAsync(cancellationToken);
                 try
                 {
@@ -130,7 +134,11 @@ public sealed class FluidicsControlService(
             actor,
             async () =>
             {
-                EnsureMockMode();
+                if (!string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
+                {
+                    return await StopPumpViaMainControllerAsync(request, actor, cancellationToken);
+                }
+
                 await Gate.WaitAsync(cancellationToken);
                 try
                 {
@@ -171,7 +179,14 @@ public sealed class FluidicsControlService(
             actor,
             async () =>
             {
-                EnsureMockMode();
+                if (!string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new BusinessRuleException(
+                        "wash_target_real_not_implemented",
+                        "Wash target control is not a PWM pump path; Real mode target wash control is not implemented yet.",
+                        StatusCodes.Status409Conflict);
+                }
+
                 await Gate.WaitAsync(cancellationToken);
                 try
                 {
@@ -223,7 +238,14 @@ public sealed class FluidicsControlService(
             actor,
             async () =>
             {
-                EnsureMockMode();
+                if (!string.Equals(deviceAdapter.Mode, DeviceModes.Mock, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new BusinessRuleException(
+                        "wash_target_real_not_implemented",
+                        "Wash target control is not a PWM pump path; Real mode target wash control is not implemented yet.",
+                        StatusCodes.Status409Conflict);
+                }
+
                 await Gate.WaitAsync(cancellationToken);
                 try
                 {
@@ -246,6 +268,230 @@ public sealed class FluidicsControlService(
                 }
             },
             cancellationToken);
+    }
+
+    private Task<CommandExecutionResult<FluidicsMutationResponse>> RunPumpViaMainControllerAsync(
+        RunPumpRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken)
+    {
+        return RunRealPumpCommandAsync(
+            request.CommandId,
+            actor,
+            request.PwmChannelCode,
+            request.SpeedPercent,
+            request.DurationMs,
+            request.TargetPointCode,
+            "fluidics.pump.run",
+            new { request.PwmChannelCode, request.SpeedPercent, request.DurationMs, request.TargetPointCode, request.Reason },
+            cancellationToken);
+    }
+
+    private Task<CommandExecutionResult<FluidicsMutationResponse>> StopPumpViaMainControllerAsync(
+        StopPumpRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken)
+    {
+        return StopRealPumpCommandAsync(
+            request.CommandId,
+            actor,
+            request.PwmChannelCode,
+            "fluidics.pump.stop",
+            new { request.PwmChannelCode, request.Reason },
+            cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<FluidicsMutationResponse>> RunRealPumpCommandAsync(
+        string commandId,
+        AuthenticatedUser actor,
+        string pwmChannelCode,
+        int speedPercent,
+        int? durationMs,
+        string? targetPointCode,
+        string auditAction,
+        object auditDetails,
+        CancellationToken cancellationToken)
+    {
+        ValidateSpeed(speedPercent);
+        var normalizedPwm = NormalizePwm(pwmChannelCode);
+        await EnsureRealPumpReadyAsync(normalizedPwm, targetPointCode, cancellationToken);
+
+        var startResult = await SendRealPumpPwmAsync(commandId, actor, normalizedPwm, speedPercent, cancellationToken);
+        if (!startResult.Ok)
+        {
+            return await FailRealPumpCommandAsync(normalizedPwm, commandId, actor, auditAction, auditDetails, startResult, cancellationToken);
+        }
+
+        var started = await ApplyRealPumpStartedAsync(normalizedPwm, commandId, actor, speedPercent, durationMs, targetPointCode, auditAction, auditDetails, cancellationToken);
+        if (speedPercent == 0 || !durationMs.HasValue)
+        {
+            return started;
+        }
+
+        await Task.Delay(Math.Max(1, durationMs.Value), cancellationToken);
+        var stopResult = await SendRealPumpPwmAsync($"{commandId}:auto-stop", actor, normalizedPwm, 0, cancellationToken);
+        if (!stopResult.Ok)
+        {
+            return await FailRealPumpCommandAsync(normalizedPwm, commandId, actor, auditAction, auditDetails, stopResult, cancellationToken);
+        }
+
+        return await ApplyRealPumpStoppedAsync(normalizedPwm, commandId, actor, FluidicsStatuses.Completed, auditAction, auditDetails, "Pump command completed via main controller.", cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<FluidicsMutationResponse>> StopRealPumpCommandAsync(
+        string commandId,
+        AuthenticatedUser actor,
+        string pwmChannelCode,
+        string auditAction,
+        object auditDetails,
+        CancellationToken cancellationToken)
+    {
+        var normalizedPwm = NormalizePwm(pwmChannelCode);
+        await EnsureRealPumpReadyAsync(normalizedPwm, null, cancellationToken);
+        var stopResult = await SendRealPumpPwmAsync(commandId, actor, normalizedPwm, 0, cancellationToken);
+        if (!stopResult.Ok)
+        {
+            return await FailRealPumpCommandAsync(normalizedPwm, commandId, actor, auditAction, auditDetails, stopResult, cancellationToken);
+        }
+
+        return await ApplyRealPumpStoppedAsync(normalizedPwm, commandId, actor, FluidicsStatuses.Stopped, auditAction, auditDetails, "Pump stopped via main controller.", cancellationToken);
+    }
+
+    private async Task EnsureRealPumpReadyAsync(string normalizedPwm, string? targetPointCode, CancellationToken cancellationToken)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+            var pump = await RequirePumpAsync(normalizedPwm, cancellationToken);
+            EnsurePumpCanOperate(pump);
+            if (!string.IsNullOrWhiteSpace(targetPointCode))
+            {
+                _ = await RequireWashTargetAsync(targetPointCode, cancellationToken);
+            }
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private async Task<DeviceCommandResult> SendRealPumpPwmAsync(
+        string commandId,
+        AuthenticatedUser actor,
+        string normalizedPwm,
+        int value,
+        CancellationToken cancellationToken)
+    {
+        var deviceRequest = new DeviceOperationRequest(
+            new DeviceCommandContext(commandId, null, actor.UserId, nameof(FluidicsControlService)),
+            DeviceModules.Pump,
+            "set-pwm",
+            new Dictionary<string, object?>
+            {
+                ["pwmId"] = PwmMap[normalizedPwm].No,
+                ["pwmChannelCode"] = normalizedPwm,
+                ["value"] = value,
+                ["speedPercent"] = value
+            });
+
+        return await deviceAdapter.RunPumpAsync(deviceRequest, cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<FluidicsMutationResponse>> ApplyRealPumpStartedAsync(
+        string normalizedPwm,
+        string commandId,
+        AuthenticatedUser actor,
+        int speedPercent,
+        int? durationMs,
+        string? targetPointCode,
+        string auditAction,
+        object auditDetails,
+        CancellationToken cancellationToken)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+            var pump = await RequirePumpAsync(normalizedPwm, cancellationToken);
+            await ApplyPumpRunAsync(pump, commandId, speedPercent, durationMs, targetPointCode, null, null, null, cancellationToken, autoCompleteAfterDuration: false);
+            AddAudit(actor, auditAction, "PumpChannelState", pump.Id, commandId, new { source = "MainController", ok = true, details = auditDetails });
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return new CommandExecutionResult<FluidicsMutationResponse>(
+                new FluidicsMutationResponse(true, commandId, false, "Pump command applied via main controller.", await BuildResponseAsync(cancellationToken)),
+                "PumpChannelState",
+                pump.Id);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private async Task<CommandExecutionResult<FluidicsMutationResponse>> ApplyRealPumpStoppedAsync(
+        string normalizedPwm,
+        string commandId,
+        AuthenticatedUser actor,
+        string status,
+        string auditAction,
+        object auditDetails,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+            var pump = await RequirePumpAsync(normalizedPwm, cancellationToken);
+            ApplyPumpStop(pump, commandId, status, null, null, null);
+            AddPumpTelemetry(pump, FluidicsTelemetryEventTypes.PumpChanged);
+            PublishPump(pump, status == FluidicsStatuses.Completed ? "completed" : "stopped");
+            AddAudit(actor, auditAction, "PumpChannelState", pump.Id, commandId, new { source = "MainController", ok = true, stopped = true, details = auditDetails });
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return new CommandExecutionResult<FluidicsMutationResponse>(
+                new FluidicsMutationResponse(true, commandId, false, message, await BuildResponseAsync(cancellationToken)),
+                "PumpChannelState",
+                pump.Id);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
+    private async Task<CommandExecutionResult<FluidicsMutationResponse>> FailRealPumpCommandAsync(
+        string normalizedPwm,
+        string commandId,
+        AuthenticatedUser actor,
+        string auditAction,
+        object auditDetails,
+        DeviceCommandResult deviceResult,
+        CancellationToken cancellationToken)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+            var pump = await RequirePumpAsync(normalizedPwm, cancellationToken);
+            pump.Status = deviceResult.Status == DeviceCommandStatuses.TimedOut ? FluidicsStatuses.TimedOut : FluidicsStatuses.Unknown;
+            pump.FaultCode = deviceResult.ErrorCode ?? "wash_pwm_command_failed";
+            pump.FaultMessage = deviceResult.Message;
+            pump.CurrentCommandId = commandId;
+            pump.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            AddPumpTelemetry(pump, FluidicsTelemetryEventTypes.PumpChanged);
+            AddFluidicsAlarm($"fluidics_pump_{pump.PwmChannelCode}_{pump.FaultCode}", pump.FaultMessage, null);
+            PublishPump(pump, "mainControllerFailed");
+            AddAudit(actor, auditAction, "PumpChannelState", pump.Id, commandId, new { source = "MainController", ok = false, deviceResult.ErrorCode, details = auditDetails });
+            await dbContext.SaveChangesAsync(cancellationToken);
+            throw new BusinessRuleException(
+                deviceResult.ErrorCode ?? "wash_pwm_command_failed",
+                deviceResult.Message,
+                StatusCodes.Status409Conflict);
+        }
+        finally
+        {
+            Gate.Release();
+        }
     }
 
     public Task<FluidicsMutationResponse> StartMixerAsync(
@@ -965,7 +1211,8 @@ public sealed class FluidicsControlService(
         string? machineRunId,
         string? workflowStepExecutionId,
         string? deviceCommandExecutionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool autoCompleteAfterDuration = true)
     {
         ValidateSpeed(speedPercent);
         if (!string.IsNullOrWhiteSpace(targetPointCode))
@@ -990,7 +1237,7 @@ public sealed class FluidicsControlService(
         AddPumpTelemetry(pump, FluidicsTelemetryEventTypes.PumpChanged);
         PublishPump(pump, "started");
 
-        if (speedPercent != 0 && durationMs.HasValue)
+        if (autoCompleteAfterDuration && speedPercent != 0 && durationMs.HasValue)
         {
             await Task.Delay(Math.Clamp(durationMs.Value, 1, 25), cancellationToken);
             ApplyPumpStop(pump, commandId, FluidicsStatuses.Completed, machineRunId, workflowStepExecutionId, deviceCommandExecutionId);
