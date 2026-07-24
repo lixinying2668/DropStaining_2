@@ -38,6 +38,8 @@ namespace Stainer.SoconBridge
 
         private object deviceInstance;
         private bool disposed;
+        private bool closePortAttempted;
+        private SoconAdapterResult firstCloseResult;
 
         /// <summary>
         /// Constructs the adapter and eagerly binds the SOCON.API types.
@@ -207,10 +209,24 @@ namespace Stainer.SoconBridge
             // caller (BridgeRequestProcessor) fail-closes the session to Blocked
             // and never reports a session closed that the device did not confirm.
             // No path/port/NodeID/coordinate is ever leaked.
+            //
+            // ClosePort is invoked AT MOST ONCE per instance. The first outcome
+            // is retained and returned on every subsequent call, so repeated
+            // Close()/Dispose() never re-invokes the underlying SDK method. The
+            // deviceInstance reference is intentionally KEPT after ClosePort so
+            // Dispose can still reflect SCDevice.Dispose() on it.
+            if (closePortAttempted)
+            {
+                return firstCloseResult;
+            }
+
+            closePortAttempted = true;
+
             if (deviceInstance == null)
             {
                 // No open device: nothing to close-port. Idempotent success.
-                return new SoconAdapterResult { Success = true };
+                firstCloseResult = new SoconAdapterResult { Success = true };
+                return firstCloseResult;
             }
 
             MethodInfo closePort;
@@ -220,12 +236,14 @@ namespace Stainer.SoconBridge
             }
             catch (Exception)
             {
-                return new SoconAdapterResult { Success = false, ErrorCode = "ClosePortNotFound" };
+                firstCloseResult = new SoconAdapterResult { Success = false, ErrorCode = "ClosePortNotFound" };
+                return firstCloseResult;
             }
 
             if (closePort == null)
             {
-                return new SoconAdapterResult { Success = false, ErrorCode = "ClosePortNotFound" };
+                firstCloseResult = new SoconAdapterResult { Success = false, ErrorCode = "ClosePortNotFound" };
+                return firstCloseResult;
             }
 
             object raw;
@@ -236,16 +254,12 @@ namespace Stainer.SoconBridge
             catch (Exception)
             {
                 // Wrap suppressed: strip any path/port/coordinate from inner.
-                return new SoconAdapterResult { Success = false, ErrorCode = "ClosePortException" };
+                firstCloseResult = new SoconAdapterResult { Success = false, ErrorCode = "ClosePortException" };
+                return firstCloseResult;
             }
 
-            var result = ToCloseResult(raw);
-            if (result.Success)
-            {
-                deviceInstance = null;
-            }
-
-            return result;
+            firstCloseResult = ToCloseResult(raw);
+            return firstCloseResult;
         }
 
         public SoconAdapterResult MoveAxis(
@@ -347,22 +361,68 @@ namespace Stainer.SoconBridge
 
         public void Dispose()
         {
+            // Idempotent and never throws. Order:
+            //   1. If ClosePort has not yet been attempted, attempt it once. The
+            //      retained firstCloseResult is the authoritative close outcome
+            //      and is never overwritten by anything below.
+            //   2. Regardless of the ClosePort outcome, reflect-call the public
+            //      parameterless SCDevice.Dispose() exactly once (when present).
+            //   3. Drop the instance reference and mark released.
+            // No exception text/path/stack ever escapes Dispose.
             if (disposed)
             {
                 return;
             }
             disposed = true;
 
-            try
+            if (!closePortAttempted)
             {
-                Close();
-            }
-            catch
-            {
-                // Dispose never throws.
+                try
+                {
+                    Close();
+                }
+                catch (Exception)
+                {
+                    // ClosePort outcome is retained inside Close(); never throw.
+                }
             }
 
+            DisposeDeviceInstance();
             deviceInstance = null;
+        }
+
+        private void DisposeDeviceInstance()
+        {
+            var instance = deviceInstance;
+            if (instance == null)
+            {
+                return;
+            }
+
+            MethodInfo disposeMethod;
+            try
+            {
+                disposeMethod = deviceType.GetMethod("Dispose", Type.EmptyTypes);
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            if (disposeMethod == null)
+            {
+                // Vendor type exposes no public parameterless Dispose().
+                return;
+            }
+
+            try
+            {
+                disposeMethod.Invoke(instance, null);
+            }
+            catch (Exception)
+            {
+                // Dispose never throws; no path/stack/exception text leaks.
+            }
         }
 
         private void AssertNotDisposed()

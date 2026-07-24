@@ -63,6 +63,19 @@ namespace Stainer.SoconBridge
                 }
                 finally
                 {
+                    // Release the processor (and any active session adapter) on
+                    // every exit path: normal return, Ctrl+C (host.Stop unblocks
+                    // Run), and a Run exception. Cleanup failures must never mask
+                    // the original exit reason, so they are swallowed here.
+                    try
+                    {
+                        processor.Dispose();
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        Console.Error.WriteLine("Bridge cleanup error: {0}", cleanupEx.GetType().Name);
+                    }
+
                     Console.WriteLine("Bridge stopped.");
                 }
             }

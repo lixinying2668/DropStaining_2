@@ -64,6 +64,239 @@ namespace Stainer.SoconBridge
                 ReadOnlySessionRejectedWhenPortOrBaudInvalid();
                 ReadOnlySessionCloseFailsWhenClosePortReturnsFalse();
                 ActionSessionDispatchesWhitelistedCommands();
+                // P0-4 ClosePort / Dispose lifecycle coverage:
+                CloseThenDisposeOrderAfterOpen();
+                AdapterReleasedWhenOpenFails();
+                AdapterReleasedWhenOpenThrows();
+                CloseFailedStillDisposedAndBlocked();
+                CloseThrowsStillDisposedAndBlocked();
+                ProcessorDisposeReleasesOpenAdapter();
+                RepeatedDisposeAndCloseDoNotDoubleRelease();
+                MultiRoundOpenCloseReleasesIndependentAdapters();
+                DisposeThrowDoesNotOverwriteCloseResult();
+            }
+
+            // ---- P0-4 lifecycle: ClosePort / Dispose ----
+
+            private void CloseThenDisposeOrderAfterOpen()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-close-order", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before close.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-close-order", Command = "CloseConfiguredReadOnlySession" });
+                Assert(close.Success, "Close should succeed.");
+
+                Assert(fake.CloseCount == 1, "Close must be called exactly once.");
+                Assert(fake.DisposeCount == 1, "Dispose must be called exactly once after close.");
+                Assert(fake.Calls.Count >= 2, "Call trace must record Close and Dispose.");
+                Assert(fake.Calls[fake.Calls.Count - 2] == "Close", "Close must precede Dispose.");
+                Assert(fake.Calls[fake.Calls.Count - 1] == "Dispose", "Dispose must follow Close.");
+            }
+
+            private void AdapterReleasedWhenOpenFails()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(false, false, true, false, false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-open-fail", Command = "OpenConfiguredReadOnlySession" });
+                Assert(!open.Success, "Open failure must be reported.");
+                Assert(open.Details.SessionState == "Blocked", "Session must block on open failure.");
+
+                Assert(fake.OpenCount == 1, "Open must be attempted once.");
+                Assert(fake.CloseCount == 1, "Adapter must be closed once after open failure.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once after open failure.");
+            }
+
+            private void AdapterReleasedWhenOpenThrows()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(true, true, true, false, false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-open-throw", Command = "OpenConfiguredReadOnlySession" });
+                Assert(!open.Success, "Open throw must fail-closed.");
+                Assert(open.Details.SessionState == "Blocked", "Session must block on open throw.");
+                Assert(open.Details.BlockReason == "OpenException", "Block reason must be OpenException.");
+
+                Assert(fake.OpenCount == 1, "Open must be attempted once.");
+                Assert(fake.CloseCount == 1, "Adapter must be closed once after open threw.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once after open threw.");
+            }
+
+            private void CloseFailedStillDisposedAndBlocked()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-close-fail", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before testing close failure.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-close-fail", Command = "CloseConfiguredReadOnlySession" });
+                Assert(!close.Success, "ClosePort failure must block.");
+                Assert(close.Details.SessionState == "Blocked", "Session must be blocked when ClosePort fails.");
+                Assert(close.Details.BlockReason == "CloseFailed", "Block reason must be CloseFailed.");
+
+                Assert(fake.CloseCount == 1, "Close must be attempted once.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once even when ClosePort failed.");
+            }
+
+            private void CloseThrowsStillDisposedAndBlocked()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(true, false, true, true, false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-close-throw", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before testing close throw.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-close-throw", Command = "CloseConfiguredReadOnlySession" });
+                Assert(!close.Success, "Throwing ClosePort must block.");
+                Assert(close.Details.SessionState == "Blocked", "Session must be blocked when ClosePort throws.");
+                Assert(close.Details.BlockReason == "CloseFailed", "Block reason must be CloseFailed.");
+
+                Assert(fake.CloseCount == 1, "Close must be attempted once.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once even when ClosePort threw.");
+            }
+
+            private void ProcessorDisposeReleasesOpenAdapter()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-proc-dispose", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before processor dispose.");
+
+                processor.Dispose();
+
+                // Session was Open: processor.Dispose must execute Close -> Dispose once each.
+                Assert(fake.CloseCount == 1, "Processor.Dispose must Close the active adapter once.");
+                Assert(fake.DisposeCount == 1, "Processor.Dispose must Dispose the active adapter once.");
+                Assert(fake.Calls[fake.Calls.Count - 2] == "Close", "Processor.Dispose must Close before Dispose.");
+                Assert(fake.Calls[fake.Calls.Count - 1] == "Dispose", "Processor.Dispose must Dispose after Close.");
+            }
+
+            private void RepeatedDisposeAndCloseDoNotDoubleRelease()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-idempotent", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed.");
+
+                processor.Dispose();
+                processor.Dispose();
+                Assert(fake.CloseCount == 1, "Repeated processor.Dispose must not Close again.");
+                Assert(fake.DisposeCount == 1, "Repeated processor.Dispose must not Dispose again.");
+
+                // Closing after disposal must not re-invoke the (already released) adapter.
+                processor.Process(new BridgeRequest { RequestId = "p04-idempotent", Command = "CloseConfiguredReadOnlySession" });
+                Assert(fake.CloseCount == 1, "Close after dispose must not re-invoke adapter Close.");
+                Assert(fake.DisposeCount == 1, "Close after dispose must not re-invoke adapter Dispose.");
+
+                processor.Dispose();
+            }
+
+            private void MultiRoundOpenCloseReleasesIndependentAdapters()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var created = new List<FakeReadOnlyAdapter>();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        var fresh = new FakeReadOnlyAdapter();
+                        created.Add(fresh);
+                        return fresh;
+                    });
+
+                for (var i = 0; i < 2; i++)
+                {
+                    var open = processor.Process(new BridgeRequest { RequestId = "p04-multi-" + i, Command = "OpenConfiguredReadOnlySession" });
+                    Assert(open.Success, "Each round should open.");
+                    var close = processor.Process(new BridgeRequest { RequestId = "p04-multi-" + i, Command = "CloseConfiguredReadOnlySession" });
+                    Assert(close.Success, "Each round should close.");
+                }
+
+                Assert(created.Count == 2, "Each round must create an independent adapter.");
+                foreach (var fresh in created)
+                {
+                    Assert(fresh.OpenCount == 1, "Each adapter must be opened once.");
+                    Assert(fresh.CloseCount == 1, "Each adapter must be closed once.");
+                    Assert(fresh.DisposeCount == 1, "Each adapter must be disposed once.");
+                }
+
+                processor.Dispose();
+            }
+
+            private void DisposeThrowDoesNotOverwriteCloseResult()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(true, false, true, false, true);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-dispose-throw", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-dispose-throw", Command = "CloseConfiguredReadOnlySession" });
+                // Close succeeded; the subsequent Dispose threw but must NOT turn this into a failure.
+                Assert(close.Success, "Dispose exception must not overwrite a successful Close result.");
+                Assert(close.Details.SessionState == "Closed", "Session must close despite Dispose throwing.");
+                Assert(close.Message == "SessionClosed", "Close message must reflect confirmed close.");
+                Assert(fake.CloseCount == 1, "Close called once.");
+                Assert(fake.DisposeCount == 1, "Dispose attempted once (and swallowed).");
+
+                processor.Dispose();
             }
 
             private void PingReturnsOffline()
@@ -984,11 +1217,17 @@ namespace Stainer.SoconBridge
 
         private sealed class FakeReadOnlyAdapter : ISoconReadOnlyAdapter
         {
+            private readonly bool openSucceeds;
+            private readonly bool openThrows;
             private readonly bool closeSucceeds;
+            private readonly bool closeThrows;
+            private readonly bool disposeThrows;
 
             public int OpenCount { get; private set; }
             public int PositionReadCount { get; private set; }
             public int CloseCount { get; private set; }
+            public int DisposeCount { get; private set; }
+            public List<string> Calls { get; private set; }
 
             public FakeReadOnlyAdapter()
                 : this(true)
@@ -996,14 +1235,31 @@ namespace Stainer.SoconBridge
             }
 
             public FakeReadOnlyAdapter(bool closeSucceeds)
+                : this(true, false, closeSucceeds, false, false)
             {
+            }
+
+            // Full control: openSucceeds / openThrows / closeSucceeds / closeThrows / disposeThrows.
+            public FakeReadOnlyAdapter(bool openSucceeds, bool openThrows, bool closeSucceeds, bool closeThrows, bool disposeThrows)
+            {
+                this.openSucceeds = openSucceeds;
+                this.openThrows = openThrows;
                 this.closeSucceeds = closeSucceeds;
+                this.closeThrows = closeThrows;
+                this.disposeThrows = disposeThrows;
+                Calls = new List<string>();
             }
 
             public SoconAdapterResult Open(ReadOnlySessionParameters parameters)
             {
                 OpenCount++;
-                return new SoconAdapterResult { Success = true };
+                Calls.Add("Open");
+                if (openThrows)
+                {
+                    throw new InvalidOperationException("simulated open failure");
+                }
+
+                return new SoconAdapterResult { Success = openSucceeds };
             }
 
             public SoconBasicStatusResult ReadBasicStatus(ReadOnlySessionParameters parameters)
@@ -1020,11 +1276,23 @@ namespace Stainer.SoconBridge
             public SoconAdapterResult Close()
             {
                 CloseCount++;
+                Calls.Add("Close");
+                if (closeThrows)
+                {
+                    throw new InvalidOperationException("simulated close failure");
+                }
+
                 return new SoconAdapterResult { Success = closeSucceeds };
             }
 
             public void Dispose()
             {
+                DisposeCount++;
+                Calls.Add("Dispose");
+                if (disposeThrows)
+                {
+                    throw new InvalidOperationException("simulated dispose failure");
+                }
             }
         }
 
